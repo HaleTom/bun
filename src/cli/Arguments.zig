@@ -257,7 +257,8 @@ fn loadSystemBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comptime
     }
     if (result.path) |path| {
         // Explicit BUN_SYSTEM_CONFIG should fail loudly; auto-discovered default is optional.
-        try loadBunfig(allocator, !result.is_explicit, path, ctx, comptime cmd);
+        // System config is not project-level, so don't set ctx.debug.loaded_bunfig.
+        try loadBunfig(allocator, !result.is_explicit, false, path, ctx, comptime cmd);
     }
 }
 
@@ -270,9 +271,10 @@ fn loadGlobalBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comptime
     try loadSystemBunfig(allocator, ctx, cmd);
 
     // Then load user/home config (overrides system config).
+    // Home config is not project-level, so don't set ctx.debug.loaded_bunfig.
     var config_buf: bun.PathBuffer = undefined;
     if (getHomeConfigPath(&config_buf)) |path| {
-        try loadBunfig(allocator, true, path, ctx, comptime cmd);
+        try loadBunfig(allocator, true, false, path, ctx, comptime cmd);
     }
 }
 
@@ -289,10 +291,11 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
         };
     }
 
-    try loadBunfig(allocator, auto_loaded, config_path, ctx, cmd);
+    // This is the project-level config path.
+    try loadBunfig(allocator, auto_loaded, true, config_path, ctx, cmd);
 }
 
-fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, is_project: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
     const source = switch (bun.sys.File.toSource(config_path, allocator, .{ .convert_bom = true })) {
         .result => |s| s,
         .err => |err| {
@@ -315,7 +318,12 @@ fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]
         ctx.log.level = original_level;
     }
     ctx.log.level = logger.Log.Level.warn;
-    ctx.debug.loaded_bunfig = true;
+    // Only mark loaded_bunfig for project-level configs so guards in
+    // run_command.zig, bun.js.zig, repl_command.zig don't skip project bunfig.toml
+    // when a system or home config was loaded.
+    if (is_project) {
+        ctx.debug.loaded_bunfig = true;
+    }
     try Bunfig.parse(allocator, &source, ctx, cmd);
 }
 
@@ -340,15 +348,19 @@ const SystemConfigResult = struct {
 
 fn getSystemConfigPath(buf: *bun.PathBuffer) SystemConfigResult {
     // Allow overriding the system config path via environment variable.
-    if (bun.env_var.BUN_SYSTEM_CONFIG.get()) |custom_path| {
-        if (custom_path.len > 0) {
-            if (custom_path.len < bun.MAX_PATH_BYTES) {
-                @memcpy(buf[0..custom_path.len], custom_path);
-                buf[custom_path.len] = 0;
-                return .{ .path = buf[0..custom_path.len :0], .is_explicit = true };
-            }
-            return .{ .path = null, .is_explicit = true };
+    // getNotEmpty() treats BUN_SYSTEM_CONFIG="" as unset.
+    if (bun.env_var.BUN_SYSTEM_CONFIG.getNotEmpty()) |custom_path| {
+        // Require absolute paths so system-wide policy is not cwd-dependent.
+        if (!resolve_path.Platform.auto.isAbsolute(custom_path)) {
+            Output.errGeneric("BUN_SYSTEM_CONFIG must be an absolute path, got: \"{s}\"", .{custom_path});
+            Global.exit(1);
         }
+        if (custom_path.len < bun.MAX_PATH_BYTES) {
+            @memcpy(buf[0..custom_path.len], custom_path);
+            buf[custom_path.len] = 0;
+            return .{ .path = buf[0..custom_path.len :0], .is_explicit = true };
+        }
+        return .{ .path = null, .is_explicit = true };
     }
 
     if (comptime bun.Environment.isWindows) {
@@ -368,9 +380,14 @@ fn getSystemConfigPath(buf: *bun.PathBuffer) SystemConfigResult {
 }
 
 pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) OOM!void {
+    // BUN_SYSTEM_CONFIG is an explicit administrator policy override — it must be
+    // honored even in standalone executables compiled with disable_autoload_bunfig.
+    // getNotEmpty() treats BUN_SYSTEM_CONFIG="" as unset.
+    const has_explicit_system_config = bun.env_var.BUN_SYSTEM_CONFIG.getNotEmpty() != null;
+
     // If running as a standalone executable with autoloadBunfig disabled, skip config loading
-    // unless an explicit config path was provided via --config
-    if (user_config_path_ == null) {
+    // unless an explicit config path was provided via --config or BUN_SYSTEM_CONFIG.
+    if (user_config_path_ == null and !has_explicit_system_config) {
         if (bun.StandaloneModuleGraph.get()) |graph| {
             if (graph.flags.disable_autoload_bunfig) {
                 return;
@@ -382,7 +399,7 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
 
     // Load system-wide config when an explicit BUN_SYSTEM_CONFIG is set (any command)
     // or for commands that load global config (package manager commands).
-    if (bun.env_var.BUN_SYSTEM_CONFIG.get() != null or comptime cmd.readGlobalConfig()) {
+    if (has_explicit_system_config or comptime cmd.readGlobalConfig()) {
         loadSystemBunfig(allocator, ctx, cmd) catch |err| {
             if (ctx.log.hasAny()) {
                 ctx.log.print(Output.errorWriter()) catch {};
@@ -398,7 +415,8 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
             ctx.has_loaded_global_config = true;
 
             if (getHomeConfigPath(&config_buf)) |path| {
-                loadBunfig(allocator, true, path, ctx, comptime cmd) catch |err| {
+                // Home config is not project-level, so don't mark loaded_bunfig.
+                loadBunfig(allocator, true, false, path, ctx, comptime cmd) catch |err| {
                     if (ctx.log.hasAny()) {
                         ctx.log.print(Output.errorWriter()) catch {};
                     }
