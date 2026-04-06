@@ -33,8 +33,15 @@ pub const Run = struct {
         js_ast.Stmt.Data.Store.create();
         const arena = Arena.init();
 
-        // Load bunfig.toml unless disabled by compile flags
-        // Note: config loading with execArgv is handled earlier in cli.zig via loadConfig
+        // Load system-wide bunfig (BUN_SYSTEM_CONFIG / /etc/bunfig.toml / %ALLUSERSPROFILE%)
+        // even when disable_autoload_bunfig is set — it is an administrator policy
+        // override that must work for compiled binaries the same as for `bun run`.
+        // The has_loaded_system_config guard inside loadSystemBunfig makes this a
+        // no-op when loadConfig already ran (--exec-args path).
+        bun.cli.Arguments.loadSystemBunfig(ctx.allocator, ctx, .RunCommand) catch {};
+
+        // Load project bunfig.toml unless disabled by compile flags.
+        // Note: config loading with execArgv is handled earlier in cli.zig via loadConfig.
         if (!ctx.debug.loaded_bunfig and !graph_ptr.flags.disable_autoload_bunfig) {
             try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }

@@ -245,7 +245,7 @@ pub const test_only_params = [_]ParamType{
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
-fn loadSystemBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+pub fn loadSystemBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: Command.Tag) !void {
     if (ctx.has_loaded_system_config) return;
     ctx.has_loaded_system_config = true;
 
@@ -365,7 +365,7 @@ fn getSystemConfigPath(buf: *bun.PathBuffer) SystemConfigResult {
 
     if (comptime bun.Environment.isWindows) {
         // On Windows, use %ALLUSERSPROFILE%\bunfig.toml (typically C:\ProgramData\bunfig.toml).
-        if (bun.env_var.ALLUSERSPROFILE.get()) |all_users| {
+        if (bun.env_var.ALLUSERSPROFILE.getNotEmpty()) |all_users| {
             var paths = [_]string{"bunfig.toml"};
             return .{ .path = resolve_path.joinAbsStringBufZ(all_users, buf, &paths, .auto), .is_explicit = false };
         }
@@ -385,20 +385,9 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
     // getNotEmpty() treats BUN_SYSTEM_CONFIG="" as unset.
     const has_explicit_system_config = bun.env_var.BUN_SYSTEM_CONFIG.getNotEmpty() != null;
 
-    // If running as a standalone executable with autoloadBunfig disabled, skip config loading
-    // unless an explicit config path was provided via --config or BUN_SYSTEM_CONFIG.
-    if (user_config_path_ == null and !has_explicit_system_config) {
-        if (bun.StandaloneModuleGraph.get()) |graph| {
-            if (graph.flags.disable_autoload_bunfig) {
-                return;
-            }
-        }
-    }
-
-    var config_buf: bun.PathBuffer = undefined;
-
-    // Load system-wide config when an explicit BUN_SYSTEM_CONFIG is set (any command)
-    // or for commands that load global config (package manager commands).
+    // Load system-wide config BEFORE the standalone disable check so that
+    // BUN_SYSTEM_CONFIG is honored even for compiled binaries, while still
+    // allowing disable_autoload_bunfig to block home/project config loading.
     if (has_explicit_system_config or comptime cmd.readGlobalConfig()) {
         loadSystemBunfig(allocator, ctx, cmd) catch |err| {
             if (ctx.log.hasAny()) {
@@ -409,6 +398,18 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
             Global.crash();
         };
     }
+
+    // If running as a standalone executable with autoloadBunfig disabled, skip further config loading
+    // unless an explicit config path was provided via --config. System config was already loaded above.
+    if (user_config_path_ == null) {
+        if (bun.StandaloneModuleGraph.get()) |graph| {
+            if (graph.flags.disable_autoload_bunfig) {
+                return;
+            }
+        }
+    }
+
+    var config_buf: bun.PathBuffer = undefined;
 
     if (comptime cmd.readGlobalConfig()) {
         if (!ctx.has_loaded_global_config) {
