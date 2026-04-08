@@ -6300,7 +6300,12 @@ pub const NodeFS = struct {
                             mode_ |= c.COPYFILE_EXCL;
                         }
 
-                        return ret.errnoSysP(c.copyfile(src, dest, null, mode_), .copyfile, src) orelse ret.success;
+                        const first_try = ret.errnoSysP(c.copyfile(src, dest, null, mode_), .copyfile, src) orelse return ret.success;
+                        if (first_try == .err and first_try.err.errno == @intFromEnum(Syscall.E.NOENT)) {
+                            bun.makePath(std.fs.cwd(), bun.path.dirname(dest, .auto)) catch {};
+                            return ret.errnoSysP(c.copyfile(src, dest, null, mode_), .copyfile, src) orelse ret.success;
+                        }
+                        return first_try;
                     }
                     @memcpy(this.sync_error_buf[0..src.len], src);
                     return Maybe(Return.CopyFile){ .err = .{
@@ -6407,7 +6412,14 @@ pub const NodeFS = struct {
                     if (err.getErrno() == .LOOP) {
                         // ELOOP is returned when you open a symlink with NOFOLLOW.
                         // as in, it does not actually let you open it.
-                        return Syscall.symlink(src, dest);
+                        const first_try = Syscall.symlink(src, dest);
+                        if (first_try == .err and first_try.err.getErrno() == .NOENT) {
+                            // Create the parent directory if it doesn't exist and retry,
+                            // matching the regular-file fallback below.
+                            bun.makePath(std.fs.cwd(), bun.path.dirname(dest, .auto)) catch {};
+                            return Syscall.symlink(src, dest);
+                        }
+                        return first_try;
                     }
 
                     return .{ .err = err };
@@ -6589,6 +6601,14 @@ pub const NodeFS = struct {
                 else
                     0;
                 if (windows.CreateSymbolicLinkW(dest, wbuf[0..len :0], flags) == 0) {
+                    // If the destination's parent directory doesn't exist, create it and retry,
+                    // matching the regular-file fallback above.
+                    if (windows.GetLastError() == .PATH_NOT_FOUND) {
+                        bun.makePathW(std.fs.cwd(), bun.path.dirnameW(dest)) catch {};
+                        if (windows.CreateSymbolicLinkW(dest, wbuf[0..len :0], flags) != 0) {
+                            return ret.success;
+                        }
+                    }
                     return ret.errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse dst_enoent_maybe;
                 }
                 return ret.success;
