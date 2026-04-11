@@ -81,18 +81,39 @@ export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
 }
 
 /// Retry `graph.find(candidate)` after injecting the `root/` suffix
-/// between `base_path` and the rest of the path. This lets us resolve
-/// specifiers that arrive missing the `root/` prefix used internally
-/// by the embedded module graph — for example the
+/// between the standalone base path and the rest of the path. This
+/// lets us resolve specifiers that arrive missing the `root/` prefix
+/// used internally by the embedded module graph — for example the
 /// `/$bunfs/workers/worker.js` path produced by
 /// `new URL(rel, import.meta.url)` in standalone binaries, which the
 /// graph actually stores as `/$bunfs/root/workers/worker.js`.
+///
+/// Accepts both POSIX `/$bunfs/...` and Windows `B:\\~BUN\\...` /
+/// `B:/~BUN/...` prefix forms, matching
+/// `StandaloneModuleGraph.isBunStandaloneFilePathCanonicalized`.
 fn findWithRootPrefix(graph: *const bun.StandaloneModuleGraph, candidate: []const u8) ?[]const u8 {
     const bp = bun.StandaloneModuleGraph.base_path;
+    const bpp = bun.StandaloneModuleGraph.base_public_path;
     const bpwds = bun.StandaloneModuleGraph.base_public_path_with_default_suffix;
-    if (!bun.strings.hasPrefixComptime(candidate, bp)) return null;
+
+    // Already prefixed with `root/` — nothing to inject. Uses
+    // `base_public_path_with_default_suffix`, which is the
+    // forward-slash form on Windows and matches what
+    // `findAssumeStandalonePath` normalizes to.
     if (bun.strings.hasPrefixComptime(candidate, bpwds)) return null;
-    const tail = candidate[bp.len..];
+
+    // On POSIX, `base_path == base_public_path == "/$bunfs/"`. On
+    // Windows they differ: `base_path` is `"B:\\~BUN\\"` (used by
+    // native Windows paths) and `base_public_path` is `"B:/~BUN/"`
+    // (used by file URLs and the graph's internal keys). Match both.
+    const prefix_len = if (bun.strings.hasPrefixComptime(candidate, bp))
+        bp.len
+    else if (Environment.isWindows and bun.strings.hasPrefixComptime(candidate, bpp))
+        bpp.len
+    else
+        return null;
+
+    const tail = candidate[prefix_len..];
     var scratch: bun.PathBuffer = undefined;
     if (bpwds.len + tail.len > scratch.len) return null;
     @memcpy(scratch[0..bpwds.len], bpwds);

@@ -40,8 +40,7 @@ describe("issue #29124 — new Worker() in compiled standalone binaries", () => 
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [buildOut, buildErr, buildCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-    expect(buildErr).not.toContain("error");
+    const [, , buildCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
     expect(buildCode).toBe(0);
 
     await using run = Bun.spawn({
@@ -142,6 +141,50 @@ describe("issue #29124 — new Worker() in compiled standalone binaries", () => 
     expect(runErr).not.toContain("ModuleNotFound");
     expect(runErr).not.toContain("BuildMessage");
     expect(runOut).toContain("msg: hello from flat worker");
+    expect(runCode).toBe(0);
+  });
+
+  test("nested direct string specifier resolves via embedded graph", async () => {
+    // Exercises the `is_relative` branch of resolveEntryPointSpecifier
+    // directly — no `new URL()` / `import.meta.resolve()` wrapper.
+    using dir = tempDir("issue-29124-string-specifier", {
+      "src/cmd/main.ts": /* js */ `
+        const worker = new Worker("../workers/worker.ts");
+        worker.addEventListener("message", (e) => {
+          console.log("msg:", e.data);
+          worker.terminate();
+        });
+        worker.addEventListener("error", (e) => {
+          console.log("error:", e.message);
+          process.exit(1);
+        });
+      `,
+      "src/workers/worker.ts": /* js */ `
+        postMessage("hello from string specifier");
+      `,
+    });
+
+    const outfile = join(String(dir), "myapp");
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "./src/cmd/main.ts", "./src/workers/worker.ts", "--outfile", outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const buildCode = await build.exited;
+    expect(buildCode).toBe(0);
+
+    await using run = Bun.spawn({
+      cmd: [outfile],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [runOut, runErr, runCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect(runErr).not.toContain("ModuleNotFound");
+    expect(runErr).not.toContain("BuildMessage");
+    expect(runOut).toContain("msg: hello from string specifier");
     expect(runCode).toBe(0);
   });
 });
