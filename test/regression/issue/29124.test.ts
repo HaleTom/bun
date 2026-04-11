@@ -13,7 +13,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
-describe("issue #29124 — new Worker() in compiled standalone binaries", () => {
+describe.concurrent("issue #29124 — new Worker() in compiled standalone binaries", () => {
   test("nested `new URL(rel, import.meta.url)` resolves via embedded graph", async () => {
     using dir = tempDir("issue-29124-nested-url", {
       "src/cmd/main.ts": /* js */ `
