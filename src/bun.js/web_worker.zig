@@ -197,10 +197,6 @@ fn resolveEntryPointSpecifier(
                 const candidate = pathbuf[0..base_len];
                 if (graph.find(candidate)) |js_file| return js_file.name;
                 if (findWithRootPrefix(graph, candidate)) |name| return name;
-                // Also try the original `.ts` path with `root/`
-                // injected, in case a raw `.ts` file was embedded.
-                pathbuf[base_len - 3 .. base_len][0..3].* = ".ts".*;
-                if (findWithRootPrefix(graph, pathbuf[0..base_len])) |name| return name;
                 break :try_from_extension;
             }
 
