@@ -64,6 +64,11 @@ public:
     using ThreadSafeRefCounted::ref;
 
     void terminate();
+    // Request that the worker's event loop stop on its next tick. The task
+    // currently running still finishes; unlike `terminate()`, this does not
+    // set the TerminateRequestedFlag. Used by `self.close()` from inside the
+    // worker.
+    void notifyNeedTermination();
     bool wasTerminated() const;
     bool hasPendingActivity() const;
     bool isClosingOrTerminated() const;
@@ -125,5 +130,6 @@ private:
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionPostMessage);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSelfClose);
 
 } // namespace WebCore
