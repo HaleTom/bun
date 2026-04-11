@@ -600,14 +600,6 @@ pub fn exit(this: *WebWorker) void {
 }
 
 /// Request a terminate from any thread.
-///
-/// Only touches the worker's own VM (atomic terminate flag + event-loop
-/// wakeup) — the parent's KeepAlive ref is dropped later during `deinit()`
-/// via `unrefConcurrently`, which is the safe cross-thread path. This used
-/// to call `setRefInternal(false)` here as well, but `unref` is not
-/// thread-safe; calling it from the worker thread races with the parent's
-/// event loop and has been observed as the source of flaky / ASAN failures
-/// on `self.close()` tests.
 pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
     if (this.status.load(.acquire) == .terminated) {
         return;
@@ -619,7 +611,11 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
 
     if (this.vm) |vm| {
         vm.eventLoop().wakeup();
+        // TODO(@190n) notifyNeedTermination
     }
+
+    // TODO(@190n) delete
+    this.setRefInternal(false);
 }
 
 /// This handles cleanup, emitting the "close" event, and deinit.
