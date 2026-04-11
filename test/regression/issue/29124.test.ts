@@ -8,19 +8,11 @@ describe.concurrent("issue #29124 — new Worker() in compiled standalone binari
   test("nested `new URL(rel, import.meta.url)` resolves via embedded graph", async () => {
     using dir = tempDir("issue-29124-nested-url", {
       "src/cmd/main.ts": /* js */ `
-        const worker = new Worker(new URL("../workers/worker.ts", import.meta.url));
-        worker.addEventListener("message", (e) => {
-          console.log("msg:", e.data);
-          worker.terminate();
-          process.exit(0);
-        });
-        worker.addEventListener("error", (e) => {
-          console.log("error:", e.message);
-          process.exit(1);
-        });
+        new Worker(new URL("../workers/worker.ts", import.meta.url));
+        console.log("main loaded");
       `,
       "src/workers/worker.ts": /* js */ `
-        postMessage("hello from nested worker");
+        console.log("hello from nested worker");
       `,
     });
 
@@ -44,27 +36,18 @@ describe.concurrent("issue #29124 — new Worker() in compiled standalone binari
     const [runOut, runErr, runCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
     expect(runErr).not.toContain("ModuleNotFound");
     expect(runErr).not.toContain("BuildMessage");
-    expect(runOut).toContain("msg: hello from nested worker");
+    expect(runOut).toContain("hello from nested worker");
     expect(runCode).toBe(0);
   });
 
   test("nested `import.meta.resolve` result resolves via embedded graph", async () => {
     using dir = tempDir("issue-29124-resolve", {
       "src/cmd/main.ts": /* js */ `
-        const href = import.meta.resolve("../workers/worker.ts");
-        const worker = new Worker(href);
-        worker.addEventListener("message", (e) => {
-          console.log("msg:", e.data);
-          worker.terminate();
-          process.exit(0);
-        });
-        worker.addEventListener("error", (e) => {
-          console.log("error:", e.message);
-          process.exit(1);
-        });
+        new Worker(import.meta.resolve("../workers/worker.ts"));
+        console.log("main loaded");
       `,
       "src/workers/worker.ts": /* js */ `
-        postMessage("hello from resolve");
+        console.log("hello from resolve");
       `,
     });
 
@@ -88,26 +71,18 @@ describe.concurrent("issue #29124 — new Worker() in compiled standalone binari
     const [runOut, runErr, runCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
     expect(runErr).not.toContain("ModuleNotFound");
     expect(runErr).not.toContain("BuildMessage");
-    expect(runOut).toContain("msg: hello from resolve");
+    expect(runOut).toContain("hello from resolve");
     expect(runCode).toBe(0);
   });
 
   test("flat `new URL(rel, import.meta.url)` resolves via embedded graph", async () => {
     using dir = tempDir("issue-29124-flat-url", {
       "cli.ts": /* js */ `
-        const worker = new Worker(new URL("./my-worker.ts", import.meta.url).href);
-        worker.addEventListener("message", (e) => {
-          console.log("msg:", e.data);
-          worker.terminate();
-          process.exit(0);
-        });
-        worker.addEventListener("error", (e) => {
-          console.log("error:", e.message);
-          process.exit(1);
-        });
+        new Worker(new URL("./my-worker.ts", import.meta.url).href);
+        console.log("main loaded");
       `,
       "my-worker.ts": /* js */ `
-        postMessage("hello from flat worker");
+        console.log("hello from flat worker");
       `,
     });
 
@@ -131,7 +106,7 @@ describe.concurrent("issue #29124 — new Worker() in compiled standalone binari
     const [runOut, runErr, runCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
     expect(runErr).not.toContain("ModuleNotFound");
     expect(runErr).not.toContain("BuildMessage");
-    expect(runOut).toContain("msg: hello from flat worker");
+    expect(runOut).toContain("hello from flat worker");
     expect(runCode).toBe(0);
   });
 
@@ -140,19 +115,11 @@ describe.concurrent("issue #29124 — new Worker() in compiled standalone binari
     // directly — no `new URL()` / `import.meta.resolve()` wrapper.
     using dir = tempDir("issue-29124-string-specifier", {
       "src/cmd/main.ts": /* js */ `
-        const worker = new Worker("../workers/worker.ts");
-        worker.addEventListener("message", (e) => {
-          console.log("msg:", e.data);
-          worker.terminate();
-          process.exit(0);
-        });
-        worker.addEventListener("error", (e) => {
-          console.log("error:", e.message);
-          process.exit(1);
-        });
+        new Worker("../workers/worker.ts");
+        console.log("main loaded");
       `,
       "src/workers/worker.ts": /* js */ `
-        postMessage("hello from string specifier");
+        console.log("hello from string specifier");
       `,
     });
 
@@ -176,7 +143,7 @@ describe.concurrent("issue #29124 — new Worker() in compiled standalone binari
     const [runOut, runErr, runCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
     expect(runErr).not.toContain("ModuleNotFound");
     expect(runErr).not.toContain("BuildMessage");
-    expect(runOut).toContain("msg: hello from string specifier");
+    expect(runOut).toContain("hello from string specifier");
     expect(runCode).toBe(0);
   });
 });
