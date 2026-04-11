@@ -34,25 +34,13 @@ describe("issue #29124 — new Worker() in compiled standalone binaries", () => 
 
     const outfile = join(String(dir), "myapp");
     await using build = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "build",
-        "--compile",
-        "./src/cmd/main.ts",
-        "./src/workers/worker.ts",
-        "--outfile",
-        outfile,
-      ],
+      cmd: [bunExe(), "build", "--compile", "./src/cmd/main.ts", "./src/workers/worker.ts", "--outfile", outfile],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [buildOut, buildErr, buildCode] = await Promise.all([
-      build.stdout.text(),
-      build.stderr.text(),
-      build.exited,
-    ]);
+    const [buildOut, buildErr, buildCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
     expect(buildErr).not.toContain("error");
     expect(buildCode).toBe(0);
 
@@ -62,11 +50,7 @@ describe("issue #29124 — new Worker() in compiled standalone binaries", () => 
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [runOut, runErr, runCode] = await Promise.all([
-      run.stdout.text(),
-      run.stderr.text(),
-      run.exited,
-    ]);
+    const [runOut, runErr, runCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
     expect(runErr).not.toContain("ModuleNotFound");
     expect(runErr).not.toContain("BuildMessage");
     expect(runOut).toContain("msg: hello from nested worker");
@@ -94,15 +78,7 @@ describe("issue #29124 — new Worker() in compiled standalone binaries", () => 
 
     const outfile = join(String(dir), "myapp");
     await using build = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "build",
-        "--compile",
-        "./src/cmd/main.ts",
-        "./src/workers/worker.ts",
-        "--outfile",
-        outfile,
-      ],
+      cmd: [bunExe(), "build", "--compile", "./src/cmd/main.ts", "./src/workers/worker.ts", "--outfile", outfile],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -117,11 +93,7 @@ describe("issue #29124 — new Worker() in compiled standalone binaries", () => 
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [runOut, runErr, runCode] = await Promise.all([
-      run.stdout.text(),
-      run.stderr.text(),
-      run.exited,
-    ]);
+    const [runOut, runErr, runCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
     expect(runErr).not.toContain("ModuleNotFound");
     expect(runErr).not.toContain("BuildMessage");
     expect(runOut).toContain("msg: hello from resolve");
@@ -151,15 +123,7 @@ describe("issue #29124 — new Worker() in compiled standalone binaries", () => 
 
     const outfile = join(String(dir), "cli");
     await using build = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "build",
-        "--compile",
-        "cli.ts",
-        "my-worker.ts",
-        "--outfile",
-        outfile,
-      ],
+      cmd: [bunExe(), "build", "--compile", "cli.ts", "my-worker.ts", "--outfile", outfile],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -174,11 +138,7 @@ describe("issue #29124 — new Worker() in compiled standalone binaries", () => 
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [runOut, runErr, runCode] = await Promise.all([
-      run.stdout.text(),
-      run.stderr.text(),
-      run.exited,
-    ]);
+    const [runOut, runErr, runCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
     expect(runErr).not.toContain("ModuleNotFound");
     expect(runErr).not.toContain("BuildMessage");
     expect(runOut).toContain("msg: hello from flat worker");
