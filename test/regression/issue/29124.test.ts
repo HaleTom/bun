@@ -76,7 +76,7 @@ describe.concurrent("issue #29124 — new Worker() in compiled standalone binari
       stdout: "pipe",
       stderr: "pipe",
     });
-    const buildCode = await build.exited;
+    const [, , buildCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
     expect(buildCode).toBe(0);
 
     await using run = Bun.spawn({
@@ -119,7 +119,7 @@ describe.concurrent("issue #29124 — new Worker() in compiled standalone binari
       stdout: "pipe",
       stderr: "pipe",
     });
-    const buildCode = await build.exited;
+    const [, , buildCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
     expect(buildCode).toBe(0);
 
     await using run = Bun.spawn({
@@ -164,7 +164,7 @@ describe.concurrent("issue #29124 — new Worker() in compiled standalone binari
       stdout: "pipe",
       stderr: "pipe",
     });
-    const buildCode = await build.exited;
+    const [, , buildCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
     expect(buildCode).toBe(0);
 
     await using run = Bun.spawn({
