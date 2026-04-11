@@ -1,13 +1,4 @@
 // https://github.com/oven-sh/bun/issues/29124
-//
-// `new Worker(new URL("./nested/worker.ts", import.meta.url))` in a
-// `bun build --compile` standalone binary resolved to
-// `/$bunfs/nested/worker.ts` — missing the `root/` prefix that the
-// embedded module graph uses — and `resolveEntryPointSpecifier` only
-// rewrote `.ts → .js` for `./` / `../` inputs. The result was a
-// `ModuleNotFound` error at runtime. Verify all four forms the docs
-// show (`./foo.ts`, `./nested/foo.ts` string, `new URL()`, and
-// `import.meta.resolve`) work in standalone binaries.
 
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -100,9 +91,6 @@ describe.concurrent("issue #29124 — new Worker() in compiled standalone binari
   });
 
   test("flat `new URL(rel, import.meta.url)` resolves via embedded graph", async () => {
-    // Also covers the docs example at
-    // https://bun.com/docs/bundler/executables#worker which the
-    // issue author reported works but actually also hit the same bug.
     using dir = tempDir("issue-29124-flat-url", {
       "cli.ts": /* js */ `
         const worker = new Worker(new URL("./my-worker.ts", import.meta.url).href);
