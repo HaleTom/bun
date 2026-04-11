@@ -12,6 +12,7 @@ describe.concurrent("issue #29124 — new Worker() in compiled standalone binari
         worker.addEventListener("message", (e) => {
           console.log("msg:", e.data);
           worker.terminate();
+          process.exit(0);
         });
         worker.addEventListener("error", (e) => {
           console.log("error:", e.message);
@@ -55,6 +56,7 @@ describe.concurrent("issue #29124 — new Worker() in compiled standalone binari
         worker.addEventListener("message", (e) => {
           console.log("msg:", e.data);
           worker.terminate();
+          process.exit(0);
         });
         worker.addEventListener("error", (e) => {
           console.log("error:", e.message);
@@ -97,6 +99,7 @@ describe.concurrent("issue #29124 — new Worker() in compiled standalone binari
         worker.addEventListener("message", (e) => {
           console.log("msg:", e.data);
           worker.terminate();
+          process.exit(0);
         });
         worker.addEventListener("error", (e) => {
           console.log("error:", e.message);
@@ -141,6 +144,7 @@ describe.concurrent("issue #29124 — new Worker() in compiled standalone binari
         worker.addEventListener("message", (e) => {
           console.log("msg:", e.data);
           worker.terminate();
+          process.exit(0);
         });
         worker.addEventListener("error", (e) => {
           console.log("error:", e.message);
