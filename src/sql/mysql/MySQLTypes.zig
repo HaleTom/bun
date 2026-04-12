@@ -667,6 +667,19 @@ pub const Value = union(enum) {
             // year/month/day/hour/minute/second/microsecond components with no
             // timezone information. Interpret them as UTC so the resulting JS
             // `Date` has the correct UTC epoch regardless of the process TZ.
+            //
+            // MySQL in permissive sql_mode can also store partial zero-dates
+            // like "2024-00-15" or "2024-01-00" and send them via the binary
+            // protocol as non-zero-length payloads. WTF::GregorianDateTime
+            // would silently wrap month=0 to December of the prior year, so
+            // validate here and surface NaN instead, matching the text-path
+            // behaviour in `fromText`.
+            if (this.month < 1 or this.month > 12 or
+                this.day < 1 or this.day > daysInMonth(this.year, this.month) or
+                this.hour > 23 or this.minute > 59 or this.second > 59)
+            {
+                return std.math.nan(f64);
+            }
             return globalObject.gregorianDateTimeToMSUTC(
                 this.year,
                 this.month,
