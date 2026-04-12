@@ -64,8 +64,11 @@ async function runRoundTrip(url: string) {
 }
 
 // ─── Docker path (used in CI) ───────────────────────────────────────────────
+// Not `concurrent: true` — this test mutates process.env.TZ, which is global.
+// Running in the default serial mode keeps the TZ flip isolated from any
+// other concurrent tests.
 if (isDockerEnabled()) {
-  describeWithContainer("issue #29208 (containerized MySQL)", { image: "mysql_plain", concurrent: true }, container => {
+  describeWithContainer("issue #29208 (containerized MySQL)", { image: "mysql_plain" }, container => {
     beforeAll(() => container.ready);
     test("DATETIME/TIMESTAMP decode as UTC under non-UTC TZ", async () => {
       await runRoundTrip(`mysql://root@${container.host}:${container.port}/bun_sql_test`);
