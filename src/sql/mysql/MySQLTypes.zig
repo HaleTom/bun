@@ -532,13 +532,13 @@ pub const Value = union(enum) {
             if (text[7] != '-') return error.InvalidDateTimeText;
             const day = std.fmt.parseInt(u8, text[8..10], 10) catch return error.InvalidDateTimeText;
 
-            // Reject MySQL zero-date sentinels like "0000-00-00" so the caller
-            // produces NaN, matching the behaviour of the pre-existing
-            // JS-parser path. Otherwise month=0/day=0 would be normalized by
-            // JSC's GregorianDateTime into a bogus year -1 December/November
-            // timestamp instead of an Invalid Date.
+            // Reject MySQL zero-date sentinels like "0000-00-00" and impossible
+            // calendar values (e.g. 2024-02-31) so the caller produces NaN,
+            // matching the behaviour of the pre-existing JS-parser path.
+            // Otherwise JSC's GregorianDateTime would silently normalize them
+            // into bogus timestamps instead of an Invalid Date.
             if (month < 1 or month > 12) return error.InvalidDateTimeText;
-            if (day < 1 or day > 31) return error.InvalidDateTimeText;
+            if (day < 1 or day > daysInMonth(year, month)) return error.InvalidDateTimeText;
 
             var result: DateTime = .{ .year = year, .month = month, .day = day };
             if (text.len == 10) return result;
@@ -551,6 +551,12 @@ pub const Value = union(enum) {
             result.minute = std.fmt.parseInt(u8, text[14..16], 10) catch return error.InvalidDateTimeText;
             if (text[16] != ':') return error.InvalidDateTimeText;
             result.second = std.fmt.parseInt(u8, text[17..19], 10) catch return error.InvalidDateTimeText;
+            // Same rationale as the date checks above. MySQL's strict modes
+            // reject these values, but permissive modes will happily store
+            // them.
+            if (result.hour > 23 or result.minute > 59 or result.second > 59) {
+                return error.InvalidDateTimeText;
+            }
 
             if (text.len == 19) return result;
             if (text[19] != '.') return error.InvalidDateTimeText;

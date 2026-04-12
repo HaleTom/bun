@@ -125,7 +125,11 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
         },
         .MYSQL_TYPE_DATE, .MYSQL_TYPE_TIMESTAMP, .MYSQL_TYPE_DATETIME => switch (try reader.byte()) {
             0 => {
-                return SQLDataCell{ .tag = .date, .value = .{ .date = 0 } };
+                // MySQL's binary protocol sends a zero-length payload for
+                // zero-date sentinels like '0000-00-00'. Return NaN so the
+                // JS side sees an Invalid Date, matching the text-protocol
+                // path instead of surfacing the epoch (1970-01-01T00:00:00Z).
+                return SQLDataCell{ .tag = .date, .value = .{ .date = std.math.nan(f64) } };
             },
             11, 7, 4 => |l| {
                 var data = try reader.read(l);
