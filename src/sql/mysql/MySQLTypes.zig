@@ -514,6 +514,62 @@ pub const Value = union(enum) {
             return fromBinary(data.slice());
         }
 
+        /// Parse MySQL's text-protocol DATE/DATETIME/TIMESTAMP representation:
+        ///   "YYYY-MM-DD"
+        ///   "YYYY-MM-DD HH:MM:SS"
+        ///   "YYYY-MM-DD HH:MM:SS.ffffff" (1-6 fractional digits)
+        ///
+        /// MySQL TIMESTAMP values are returned in the server's session TZ; DATETIME
+        /// is a naive wall-clock. Both are returned without a TZ designator, and
+        /// Bun interprets them as UTC components so the resulting JS `Date`
+        /// round-trips the bytes the server sent, regardless of the client TZ.
+        pub fn fromText(text: []const u8) !DateTime {
+            if (text.len < 10) return error.InvalidDateTimeText;
+
+            const year = std.fmt.parseInt(u16, text[0..4], 10) catch return error.InvalidDateTimeText;
+            if (text[4] != '-') return error.InvalidDateTimeText;
+            const month = std.fmt.parseInt(u8, text[5..7], 10) catch return error.InvalidDateTimeText;
+            if (text[7] != '-') return error.InvalidDateTimeText;
+            const day = std.fmt.parseInt(u8, text[8..10], 10) catch return error.InvalidDateTimeText;
+
+            // Reject MySQL zero-date sentinels like "0000-00-00" so the caller
+            // produces NaN, matching the behaviour of the pre-existing
+            // JS-parser path. Otherwise month=0/day=0 would be normalized by
+            // JSC's GregorianDateTime into a bogus year -1 December/November
+            // timestamp instead of an Invalid Date.
+            if (month < 1 or month > 12) return error.InvalidDateTimeText;
+            if (day < 1 or day > 31) return error.InvalidDateTimeText;
+
+            var result: DateTime = .{ .year = year, .month = month, .day = day };
+            if (text.len == 10) return result;
+
+            // Either "YYYY-MM-DD HH:MM:SS" or "YYYY-MM-DDTHH:MM:SS" (ISO-style).
+            if (text.len < 19 or (text[10] != ' ' and text[10] != 'T')) return error.InvalidDateTimeText;
+
+            result.hour = std.fmt.parseInt(u8, text[11..13], 10) catch return error.InvalidDateTimeText;
+            if (text[13] != ':') return error.InvalidDateTimeText;
+            result.minute = std.fmt.parseInt(u8, text[14..16], 10) catch return error.InvalidDateTimeText;
+            if (text[16] != ':') return error.InvalidDateTimeText;
+            result.second = std.fmt.parseInt(u8, text[17..19], 10) catch return error.InvalidDateTimeText;
+
+            if (text.len == 19) return result;
+            if (text[19] != '.') return error.InvalidDateTimeText;
+
+            // Fractional seconds: up to 6 digits, right-padded to microseconds.
+            const frac = text[20..];
+            if (frac.len == 0 or frac.len > 6) return error.InvalidDateTimeText;
+            var micro: u32 = 0;
+            for (frac) |c| {
+                if (c < '0' or c > '9') return error.InvalidDateTimeText;
+                micro = micro * 10 + (c - '0');
+            }
+            var pad: usize = 6 - frac.len;
+            while (pad > 0) : (pad -= 1) micro *= 10;
+            result.microsecond = micro;
+
+            return result;
+        }
+
         pub fn fromBinary(val: []const u8) DateTime {
             switch (val.len) {
                 4 => {
@@ -601,7 +657,11 @@ pub const Value = union(enum) {
         }
 
         pub fn toJSTimestamp(this: *const DateTime, globalObject: *JSC.JSGlobalObject) bun.JSError!f64 {
-            return globalObject.gregorianDateTimeToMS(
+            // MySQL's binary DATETIME/TIMESTAMP protocol encodes raw
+            // year/month/day/hour/minute/second/microsecond components with no
+            // timezone information. Interpret them as UTC so the resulting JS
+            // `Date` has the correct UTC epoch regardless of the process TZ.
+            return globalObject.gregorianDateTimeToMSUTC(
                 this.year,
                 this.month,
                 this.day,
@@ -635,8 +695,8 @@ pub const Value = union(enum) {
             };
         }
 
-        pub fn toJS(this: DateTime, globalObject: *JSC.JSGlobalObject) JSValue {
-            return JSValue.fromDateNumber(globalObject, this.toJSTimestamp());
+        pub fn toJS(this: DateTime, globalObject: *JSC.JSGlobalObject) bun.JSError!JSValue {
+            return JSValue.fromDateNumber(globalObject, try this.toJSTimestamp(globalObject));
         }
 
         pub fn fromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) !DateTime {

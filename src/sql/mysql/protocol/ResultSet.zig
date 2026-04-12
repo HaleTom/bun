@@ -120,10 +120,15 @@ pub const Row = struct {
                 cell.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
             },
             .MYSQL_TYPE_DATE, .MYSQL_TYPE_DATETIME, .MYSQL_TYPE_TIMESTAMP => {
-                var str = bun.String.init(value.slice());
-                defer str.deref();
+                // MySQL text protocol returns naive "YYYY-MM-DD[ HH:MM:SS[.ffffff]]"
+                // values with no timezone designator. Parse the components ourselves
+                // and interpret them as UTC, matching the binary-protocol path. Using
+                // the generic JS date parser would treat them as local time and shift
+                // the result by the client's UTC offset (issue #29208).
+                const slice = value.slice();
                 const date = brk: {
-                    break :brk str.parseDate(this.globalObject) catch |err| {
+                    const dt = DateTime.fromText(slice) catch break :brk std.math.nan(f64);
+                    break :brk dt.toJSTimestamp(this.globalObject) catch |err| {
                         _ = this.globalObject.takeException(err);
                         break :brk std.math.nan(f64);
                     };
@@ -268,6 +273,7 @@ const decodeLengthInt = @import("./EncodeInt.zig").decodeLengthInt;
 
 const DecodeBinaryValue = @import("./DecodeBinaryValue.zig");
 const decodeBinaryValue = DecodeBinaryValue.decodeBinaryValue;
+const DateTime = @import("../MySQLTypes.zig").Value.DateTime;
 
 const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
