@@ -270,10 +270,10 @@ const Data = @import("../../shared/Data.zig").Data;
 const SQLDataCell = @import("../../shared/SQLDataCell.zig").SQLDataCell;
 const SQLQueryResultMode = @import("../../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
 const decodeLengthInt = @import("./EncodeInt.zig").decodeLengthInt;
+const DateTime = @import("../MySQLTypes.zig").Value.DateTime;
 
 const DecodeBinaryValue = @import("./DecodeBinaryValue.zig");
 const decodeBinaryValue = DecodeBinaryValue.decodeBinaryValue;
-const DateTime = @import("../MySQLTypes.zig").Value.DateTime;
 
 const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;

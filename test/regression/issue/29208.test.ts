@@ -8,7 +8,7 @@
 // via the binary (prepared) and text (simple) protocols.
 
 import { SQL, randomUUIDv7 } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { describeWithContainer, isDockerEnabled } from "harness";
 
 const EXPECTED_ISO = "2024-01-15T05:30:45.678Z" as const;
@@ -65,16 +65,12 @@ async function runRoundTrip(url: string) {
 
 // ─── Docker path (used in CI) ───────────────────────────────────────────────
 if (isDockerEnabled()) {
-  describeWithContainer(
-    "issue #29208 (containerized MySQL)",
-    { image: "mysql_plain", concurrent: true },
-    container => {
-      beforeAll(() => container.ready);
-      test("DATETIME/TIMESTAMP decode as UTC under non-UTC TZ", async () => {
-        await runRoundTrip(`mysql://root@${container.host}:${container.port}/bun_sql_test`);
-      });
-    },
-  );
+  describeWithContainer("issue #29208 (containerized MySQL)", { image: "mysql_plain", concurrent: true }, container => {
+    beforeAll(() => container.ready);
+    test("DATETIME/TIMESTAMP decode as UTC under non-UTC TZ", async () => {
+      await runRoundTrip(`mysql://root@${container.host}:${container.port}/bun_sql_test`);
+    });
+  });
 }
 
 // ─── Local-server path (used in dev/reproduction shells without Docker) ────
