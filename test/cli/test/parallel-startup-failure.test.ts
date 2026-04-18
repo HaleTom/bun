@@ -21,14 +21,18 @@ test("--parallel terminates when a worker exits before sending .ready", async ()
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=2"],
-    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", BUN_TEST_WORKER_EXIT_BEFORE_READY: "1" },
+    env: { ...bunEnv, BUN_TEST_WORKER_EXIT_BEFORE_READY: "1" },
     cwd: String(dir),
     stderr: "pipe",
     stdout: "pipe",
   });
+  // Generous race window: under ASAN each worker exec+init can take
+  // several seconds, and up to 4 spawn before the cap halts the run.
+  // The bug this guards against is an *infinite* respawn loop, so the
+  // exact bound isn't important — only that the run terminates.
   const result = await Promise.race([
     Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]),
-    Bun.sleep(15000).then(() => "TIMEOUT" as const),
+    Bun.sleep(45000).then(() => "TIMEOUT" as const),
   ]);
   if (result === "TIMEOUT") proc.kill("SIGKILL");
   expect(result).not.toBe("TIMEOUT");
@@ -52,4 +56,4 @@ test("--parallel terminates when a worker exits before sending .ready", async ()
   expect(spawns).toBeGreaterThanOrEqual(2);
   expect(spawns).toBeLessThanOrEqual(4);
   expect(exitCode).not.toBe(0);
-}, 30_000);
+}, 60_000);
