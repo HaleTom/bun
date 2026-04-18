@@ -334,13 +334,18 @@ pub const Coordinator = struct {
         const can_respawn = !this.bailed and w.startup_failures < max_startup_failures and has_work;
 
         if (startup_failure) {
-            // Message choice uses the actual respawn predicate so "retrying"
-            // isn't printed when bail/!has_work will prevent the respawn.
+            // Three reasons `can_respawn` is false: budget exhausted, no
+            // work left for this slot, or bailed. Only the first warrants
+            // the red error; the others are benign (another worker stole
+            // the range, or the run is already stopping) and shouldn't
+            // print an alarming "N times" that implies the cap was hit.
             this.breakDots();
             if (can_respawn) {
                 Output.prettyError("<r><yellow>⟳<r> test worker {d} exited during startup ({s}), retrying\n", .{ w.idx + 1, @tagName(status) });
-            } else {
+            } else if (w.startup_failures >= max_startup_failures) {
                 Output.prettyError("<r><red>error<r>: test worker {d} exited during startup ({s}) {d} times\n", .{ w.idx + 1, @tagName(status), w.startup_failures });
+            } else {
+                Output.prettyError("<r><d>test worker {d} exited during startup ({s})<r>\n", .{ w.idx + 1, @tagName(status) });
             }
             Output.flush();
         }
