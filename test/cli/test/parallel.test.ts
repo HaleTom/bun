@@ -98,6 +98,47 @@ test("--parallel surfaces failures and exits non-zero", async () => {
   expect(exitCode).toBe(1);
 });
 
+test("--parallel terminates when a worker exits before sending .ready", async () => {
+  // A worker that spawns OK but dies during init (before the IPC handshake)
+  // has `inflight == null`, so the per-file retry cap in reapWorker never
+  // applied and the coordinator would respawn the slot forever. The run must
+  // terminate with a non-zero exit after a bounded number of attempts.
+  //
+  // Real triggers (startup segfault, failed fd-3 adopt) aren't reproducible
+  // from a test, so runAsWorker honours BUN_TEST_WORKER_EXIT_BEFORE_READY.
+  using dir = tempDir("parallel-pre-ready-crash", {
+    "a.test.js": `import {test,expect} from "bun:test"; test("a",()=>expect(1).toBe(1));`,
+    "b.test.js": `import {test,expect} from "bun:test"; test("b",()=>expect(1).toBe(1));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", BUN_TEST_WORKER_EXIT_BEFORE_READY: "1" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const result = await Promise.race([
+    Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]),
+    Bun.sleep(15000).then(() => "TIMEOUT" as const),
+  ]);
+  if (result === "TIMEOUT") proc.kill("SIGKILL");
+  expect(result).not.toBe("TIMEOUT");
+  const [, stderr, exitCode] = result as [string, string, number];
+  // The worker's own stderr (with the reason) was captured and surfaced.
+  expect(stderr).toContain("BUN_TEST_WORKER_EXIT_BEFORE_READY");
+  expect(stderr).toContain("exited during startup");
+  // Both queued files were accounted for (marked failed, not silently dropped).
+  expect(stderr).toContain("a.test.js");
+  expect(stderr).toContain("b.test.js");
+  // Respawns are capped per slot; across K=2 slots × 2 attempts = at most 4
+  // worker processes. Only slot 0 actually spawns (maybeScaleUp is gated on
+  // `inflight != null`), so this is 2 in practice — assert a small bound.
+  const spawns = (stderr.match(/BUN_TEST_WORKER_EXIT_BEFORE_READY/g) ?? []).length;
+  expect(spawns).toBeGreaterThanOrEqual(1);
+  expect(spawns).toBeLessThanOrEqual(4);
+  expect(exitCode).not.toBe(0);
+});
+
 test("--parallel re-queues a file when its worker crashes mid-run", async () => {
   using dir = tempDir("parallel-crash", {
     "a.test.js": `import {test,expect} from "bun:test"; test("a",()=>expect(1).toBe(1));`,

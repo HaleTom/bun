@@ -43,6 +43,10 @@ pub const Coordinator = struct {
     windows_job: if (Environment.isWindows) ?std.os.windows.HANDLE else void =
         if (Environment.isWindows) null else {},
 
+    /// Consecutive pre-`.ready` exits a worker slot tolerates before the
+    /// slot stops respawning. Matches the per-file retry budget (one retry).
+    const max_startup_failures = 2;
+
     fn isDone(this: *const Coordinator) bool {
         return (this.files_done >= this.files.len or this.bailed) and this.live_workers == 0;
     }
@@ -205,7 +209,11 @@ pub const Coordinator = struct {
 
     pub fn onFrame(this: *Coordinator, w: *Worker, kind: Frame.Kind, rd: *Frame.Reader) void {
         switch (kind) {
-            .ready => this.assignWorkOrRetry(w),
+            .ready => {
+                w.reached_ready = true;
+                w.startup_failures = 0;
+                this.assignWorkOrRetry(w);
+            },
             .file_start => _ = rd.u32_(),
             .test_done => {
                 const idx = rd.u32_();
@@ -309,10 +317,23 @@ pub const Coordinator = struct {
             }
             Output.flush();
             w.inflight = null;
+        } else if (!w.reached_ready) {
+            // Process spawned but died before the IPC handshake — bad init,
+            // startup segfault, etc. `inflight` is null so the per-file retry
+            // cap above never fires; without this counter the slot would
+            // respawn forever.
+            w.startup_failures += 1;
+            this.breakDots();
+            if (w.startup_failures < max_startup_failures) {
+                Output.prettyError("<r><yellow>⟳<r> test worker {d} exited during startup ({s}), retrying\n", .{ w.idx + 1, @tagName(status) });
+            } else {
+                Output.prettyError("<r><red>error<r>: test worker {d} exited during startup ({s}) {d} times\n", .{ w.idx + 1, @tagName(status), w.startup_failures });
+            }
+            Output.flush();
         }
 
         var respawned = false;
-        if (!this.bailed and (this.hasUndispatchedFiles() or retry_idx != null)) {
+        if (!this.bailed and w.startup_failures < max_startup_failures and (this.hasUndispatchedFiles() or retry_idx != null)) {
             w.ipc.deinit();
             w.out.deinit();
             w.err.deinit();
@@ -320,6 +341,7 @@ pub const Coordinator = struct {
             w.out = .{ .role = .stdout, .worker = w };
             w.err = .{ .role = .stderr, .worker = w };
             w.process = null;
+            w.reached_ready = false;
             if (w.start()) |_| {
                 respawned = true;
                 if (retry_idx) |idx| this.pending_retry[w.idx] = idx;
