@@ -134,13 +134,13 @@ test("--parallel terminates when a worker exits before sending .ready", async ()
   expect(stderr).toContain("a.test.js");
   expect(stderr).toContain("b.test.js");
   // Respawns are capped per slot at max_startup_failures=2; with K=2 the
-  // worst case is 4 spawns. Usually only slot 0 spawns (maybeScaleUp's
-  // `inflight == null` early-return blocks scale-up while slot 0 is alive),
-  // but slot 1 can spawn if maybeScaleUp ticks in the window between slot
-  // 0's onProcessExit (`!alive → continue`) and its reap — so assert a
-  // bound, not an exact count.
+  // worst case is 4 spawns. Slot 0 alone guarantees ≥2: its first reap has
+  // startup_failures=1 < 2 and has_work=true (no worker reaches .ready, so
+  // no range is ever consumed), so it respawns once before hitting the cap.
+  // Slot 1 may additionally spawn if maybeScaleUp ticks in the window
+  // between slot 0's onProcessExit (`!alive → continue`) and its reap.
   const spawns = (stderr.match(/exited during startup/g) ?? []).length;
-  expect(spawns).toBeGreaterThanOrEqual(1);
+  expect(spawns).toBeGreaterThanOrEqual(2);
   expect(spawns).toBeLessThanOrEqual(4);
   expect(exitCode).not.toBe(0);
 });
