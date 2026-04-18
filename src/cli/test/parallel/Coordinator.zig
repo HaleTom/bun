@@ -333,7 +333,12 @@ pub const Coordinator = struct {
         }
 
         var respawned = false;
-        if (!this.bailed and w.startup_failures < max_startup_failures and (this.hasUndispatchedFiles() or retry_idx != null)) {
+        // `pending_retry` is work too: a mid-file crash may have queued a
+        // retry on this slot whose respawn then died pre-ready; without it
+        // here the retry is abandoned after one startup failure instead of
+        // getting the full `max_startup_failures` budget.
+        const has_work = this.hasUndispatchedFiles() or retry_idx != null or this.pending_retry[w.idx] != null;
+        if (!this.bailed and w.startup_failures < max_startup_failures and has_work) {
             w.ipc.deinit();
             w.out.deinit();
             w.err.deinit();
