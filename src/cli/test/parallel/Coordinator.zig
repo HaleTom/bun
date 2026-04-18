@@ -304,6 +304,11 @@ pub const Coordinator = struct {
         this.live_workers -= 1;
         this.flushCaptured(w);
         var retry_idx: ?u32 = null;
+        // Process spawned but died before the IPC handshake — bad init,
+        // startup segfault, etc. `inflight` is null so the per-file retry
+        // cap below never fires; without the per-slot counter the slot
+        // would respawn forever.
+        const startup_failure = w.inflight == null and !w.reached_ready;
         if (w.inflight) |idx| {
             this.breakDots();
             this.ensureHeader(idx);
@@ -317,14 +322,22 @@ pub const Coordinator = struct {
             }
             Output.flush();
             w.inflight = null;
-        } else if (!w.reached_ready) {
-            // Process spawned but died before the IPC handshake — bad init,
-            // startup segfault, etc. `inflight` is null so the per-file retry
-            // cap above never fires; without this counter the slot would
-            // respawn forever.
+        } else if (startup_failure) {
             w.startup_failures += 1;
+        }
+
+        // `pending_retry` is work too: a mid-file crash may have queued a
+        // retry on this slot whose respawn then died pre-ready; without it
+        // here the retry is abandoned after one startup failure instead of
+        // getting the full `max_startup_failures` budget.
+        const has_work = this.hasUndispatchedFiles() or retry_idx != null or this.pending_retry[w.idx] != null;
+        const can_respawn = !this.bailed and w.startup_failures < max_startup_failures and has_work;
+
+        if (startup_failure) {
+            // Message choice uses the actual respawn predicate so "retrying"
+            // isn't printed when bail/!has_work will prevent the respawn.
             this.breakDots();
-            if (w.startup_failures < max_startup_failures) {
+            if (can_respawn) {
                 Output.prettyError("<r><yellow>⟳<r> test worker {d} exited during startup ({s}), retrying\n", .{ w.idx + 1, @tagName(status) });
             } else {
                 Output.prettyError("<r><red>error<r>: test worker {d} exited during startup ({s}) {d} times\n", .{ w.idx + 1, @tagName(status), w.startup_failures });
@@ -333,12 +346,7 @@ pub const Coordinator = struct {
         }
 
         var respawned = false;
-        // `pending_retry` is work too: a mid-file crash may have queued a
-        // retry on this slot whose respawn then died pre-ready; without it
-        // here the retry is abandoned after one startup failure instead of
-        // getting the full `max_startup_failures` budget.
-        const has_work = this.hasUndispatchedFiles() or retry_idx != null or this.pending_retry[w.idx] != null;
-        if (!this.bailed and w.startup_failures < max_startup_failures and has_work) {
+        if (can_respawn) {
             w.ipc.deinit();
             w.out.deinit();
             w.err.deinit();
