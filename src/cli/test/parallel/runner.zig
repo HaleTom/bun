@@ -321,8 +321,9 @@ pub fn runAsWorker(
 
             // Test hook for the coordinator's pre-ready crash path. Real
             // triggers (init segfault, failed fd-3 adopt) aren't reproducible
-            // from a test; this lets parallel.test.ts assert the respawn loop
-            // is bounded. Same pattern as BUN_TEST_PARALLEL_SCALE_MS.
+            // from a test; this lets parallel-startup-failure.test.ts assert
+            // the respawn loop is bounded. Same pattern as
+            // BUN_TEST_PARALLEL_SCALE_MS.
             if (self.vm.transpiler.env.get("BUN_TEST_WORKER_EXIT_BEFORE_READY")) |_| {
                 Output.prettyErrorln("test worker exiting before .ready (BUN_TEST_WORKER_EXIT_BEFORE_READY)", .{});
                 Output.flush();
