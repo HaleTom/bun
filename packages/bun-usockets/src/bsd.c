@@ -165,8 +165,8 @@ int bsd_udp_drain_errqueue(LIBUS_SOCKET_DESCRIPTOR fd, int *err_out) {
     }
 
     for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
-        if ((cmsg->cmsg_level == SOL_IP && cmsg->cmsg_type == IP_RECVERR) ||
-            (cmsg->cmsg_level == SOL_IPV6 && cmsg->cmsg_type == IPV6_RECVERR)) {
+        if ((cmsg->cmsg_level == IPPROTO_IP && cmsg->cmsg_type == IP_RECVERR) ||
+            (cmsg->cmsg_level == IPPROTO_IPV6 && cmsg->cmsg_type == IPV6_RECVERR)) {
             struct sock_extended_err *serr = (struct sock_extended_err *) CMSG_DATA(cmsg);
             *err_out = (int) serr->ee_errno;
             return 1;
