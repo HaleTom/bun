@@ -610,25 +610,43 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 #if defined(__linux__)
             /* On Linux with IP_RECVERR, EPOLLERR fires when an ICMP error
              * (port unreachable, host unreachable, TTL exceeded, ...) is
-             * queued on the socket. The kernel may or may not also set
-             * EPOLLIN. Calling recvmmsg on such a socket returns -1 with
-             * the ICMP errno (ECONNREFUSED, EHOSTUNREACH, ENETUNREACH,
-             * EMSGSIZE, ...), which we surface via on_recv_error. The
-             * socket stays open. On other platforms (kqueue's EV_ERROR,
-             * Windows) an error event is a fatal socket condition, not a
-             * drainable error queue — preserve the pre-existing
-             * close-on-error behavior. */
-            int recv_error_surfaced = 0;
-            /* recv_would_block_only means: we drained the error queue and
-             * the only remaining outcome was EAGAIN, so the residual
-             * EPOLLERR is stale — don't treat it as fatal. */
-            int recv_would_block_only = 0;
-            int recv_drain_for_error = error;
-#else
-            int recv_drain_for_error = 0;
+             * queued on the socket's error queue. The error queue must be
+             * read with MSG_ERRQUEUE — plain recvmsg reports the pending
+             * error once but does NOT dequeue it, so EPOLLERR stays
+             * asserted and epoll_wait busy-loops. Drain the queue and
+             * surface each errno via on_recv_error; the socket stays open
+             * so the user can keep sending/receiving after a transient
+             * ICMP error. Cap iterations to avoid starving the loop if
+             * errors arrive as fast as we drain them. */
+            if (error) {
+                int err = 0;
+                int drained = 0;
+                int budget = 32;
+                while (budget-- > 0 && (drained = bsd_udp_drain_errqueue(us_poll_fd(p), &err)) > 0) {
+                    if (err != 0 && u->on_recv_error) {
+                        u->on_recv_error(u, err);
+                    }
+                    if (u->closed) {
+                        break;
+                    }
+                }
+                if (u->closed) {
+                    break;
+                }
+                /* drained < 0: recvmsg(MSG_ERRQUEUE) failed with something
+                 * other than EAGAIN — the socket is in a bad state and
+                 * the error queue cannot be cleared. Close it to avoid a
+                 * busy loop on the stuck EPOLLERR. */
+                if (drained < 0) {
+                    us_udp_socket_close(u);
+                    break;
+                }
+                /* Error queue handled; EPOLLERR is not fatal here. */
+                error = 0;
+            }
 #endif
 
-            if ((events & LIBUS_SOCKET_READABLE) || recv_drain_for_error) {
+            if (events & LIBUS_SOCKET_READABLE) {
                 do {
                     struct udp_recvbuf recvbuf;
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
@@ -636,30 +654,21 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     if (npackets > 0) {
                         u->on_data(u, &recvbuf, npackets);
                     } else {
-                        if (npackets == LIBUS_SOCKET_ERROR) {
-                            if (!bsd_would_block()) {
+                        if (npackets == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
 #if defined(__linux__)
-                                int recv_err = errno;
-                                recv_error_surfaced = 1;
-                                if (u->on_recv_error) {
-                                    u->on_recv_error(u, recv_err);
-                                }
+                            /* A pending error on the normal recv path (not
+                             * the error queue) — surface it but keep the
+                             * socket open; UDP errors are per-datagram. */
+                            int recv_err = errno;
+                            if (u->on_recv_error) {
+                                u->on_recv_error(u, recv_err);
+                            }
 #else
-                                /* non-Linux: fall through and close below */
-                                error = 1;
+                            /* non-Linux: fall through and close below */
+                            error = 1;
 #endif
-                            }
-#if defined(__linux__)
-                            else {
-                                recv_would_block_only = 1;
-                            }
-#endif
-                        } else {
-                            // 0 messages received, we are done
-                            // this case can happen if either:
-                            // - the total number of messages pending was not divisible by 8
-                            // - recvmsg() was used instead of recvmmsg() and there was no message to read.
                         }
+                        // else: 0 messages or EAGAIN — done for now.
 
                         break;
                     }
@@ -676,21 +685,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 us_poll_change(&u->p, u->loop, us_poll_events(&u->p) & LIBUS_SOCKET_READABLE);
             }
 
-#if defined(__linux__)
-            /* Only close on EPOLLERR if we didn't surface the real errno
-             * via recvmmsg + on_recv_error above AND recv wasn't just
-             * EAGAIN (which means the error queue is already drained,
-             * leaving a residual EPOLLERR). Otherwise the socket stays
-             * open so the user can keep sending/receiving after a
-             * transient ICMP error. */
-            if (error && !recv_error_surfaced && !recv_would_block_only && !u->closed) {
-                us_udp_socket_close(u);
-            }
-#else
+            /* On non-Linux platforms (kqueue's EV_ERROR, Windows) an error
+             * event is a fatal socket condition, not a drainable queue. On
+             * Linux, EPOLLERR was handled above and error was cleared. */
             if (error && !u->closed) {
                 us_udp_socket_close(u);
             }
-#endif
             break;
         }
     }
