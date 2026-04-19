@@ -635,28 +635,41 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
                 /* drained < 0: recvmsg(MSG_ERRQUEUE) failed with something
                  * other than EAGAIN — the socket is in a bad state and
-                 * the error queue cannot be cleared. Close it to avoid a
-                 * busy loop on the stuck EPOLLERR. */
+                 * the error queue cannot be cleared. Surface the failure
+                 * errno, then close to avoid a busy loop on the stuck
+                 * EPOLLERR. */
                 if (drained < 0) {
-                    us_udp_socket_close(u);
+                    int drain_errno = errno;
+                    if (drain_errno != 0 && u->on_recv_error) {
+                        u->on_recv_error(u, drain_errno);
+                    }
+                    if (!u->closed) {
+                        us_udp_socket_close(u);
+                    }
                     break;
                 }
                 /* EPOLLERR is also asserted when sk->sk_err is set without
-                 * an error-queue entry (non-ICMP async errors, or ICMP on
-                 * a connected socket where sk_err is set alongside the
-                 * queue entry). MSG_ERRQUEUE does not consume sk_err, so
-                 * EPOLLERR would stay asserted and busy-loop. SO_ERROR
-                 * reads-and-clears sk_err. In the common ICMP case the
-                 * kernel already zeroed sk_err when we dequeued the last
-                 * error-queue entry, so this returns 0 and is a no-op. */
-                int so_err = 0;
-                socklen_t so_err_len = sizeof(so_err);
-                if (getsockopt(us_poll_fd(p), SOL_SOCKET, SO_ERROR, (char *) &so_err, &so_err_len) == 0 && so_err != 0) {
-                    if (u->on_recv_error) {
-                        u->on_recv_error(u, so_err);
-                    }
-                    if (u->closed) {
-                        break;
+                 * an error-queue entry (non-ICMP async errors). MSG_ERRQUEUE
+                 * does not consume sk_err, so EPOLLERR would stay asserted
+                 * and busy-loop. SO_ERROR reads-and-clears sk_err.
+                 *
+                 * Only do this when the queue drained to empty (drained==0):
+                 * if we stopped due to budget exhaustion (drained>0, more
+                 * entries remain), the kernel's sock_dequeue_err_skb has
+                 * already written the NEXT entry's errno into sk_err, and
+                 * reading SO_ERROR now would double-report it when the
+                 * next epoll tick drains that entry. The remaining entries
+                 * keep EPOLLERR asserted so we'll process them then. */
+                if (drained == 0) {
+                    int so_err = 0;
+                    socklen_t so_err_len = sizeof(so_err);
+                    if (getsockopt(us_poll_fd(p), SOL_SOCKET, SO_ERROR, (char *) &so_err, &so_err_len) == 0 && so_err != 0) {
+                        if (u->on_recv_error) {
+                            u->on_recv_error(u, so_err);
+                        }
+                        if (u->closed) {
+                            break;
+                        }
                     }
                 }
                 /* Error queue + sk_err handled; EPOLLERR is not fatal here. */
