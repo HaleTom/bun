@@ -10,6 +10,11 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
 
+// Port 1 (tcpmux) is privileged (< 1024) so the kernel never auto-assigns it
+// and no userspace process binds it in CI — guarantees ICMP port-unreachable
+// without a bind→close→send TOCTOU race on an ephemeral port.
+const deadPort = 1;
+
 // IP_RECVERR is Linux-only; on other platforms the send either silently
 // succeeds (no ICMP surfaced on unconnected sockets) or errors synchronously.
 test.skipIf(!isLinux)("Bun.udpSocket: ICMP error does not busy-loop the event loop", async () => {
@@ -26,13 +31,7 @@ test.skipIf(!isLinux)("Bun.udpSocket: ICMP error does not busy-loop the event lo
         },
       },
     });
-    // Pick an ephemeral port nothing is listening on by binding+closing a
-    // throwaway socket.
-    const probe = await Bun.udpSocket({});
-    const deadPort = probe.port;
-    probe.close();
-
-    socket.send("x", deadPort, "127.0.0.1");
+    socket.send("x", ${deadPort}, "127.0.0.1");
     await Promise.race([gotError, Bun.sleep(2000)]);
 
     // Measure CPU time consumed while the process should be idle. With the
@@ -76,12 +75,8 @@ test.skipIf(!isLinux)("Bun.udpSocket (connected): ICMP error does not busy-loop 
     let errorCode;
     const { promise: gotError, resolve } = Promise.withResolvers();
 
-    const probe = await Bun.udpSocket({});
-    const deadPort = probe.port;
-    probe.close();
-
     const socket = await Bun.udpSocket({
-      connect: { hostname: "127.0.0.1", port: deadPort },
+      connect: { hostname: "127.0.0.1", port: ${deadPort} },
       socket: {
         error(err) {
           errorCount++;
@@ -130,12 +125,7 @@ test.skipIf(!isLinux)("node:dgram: ICMP error does not busy-loop the event loop"
       errorCode ??= err?.code;
       resolve();
     });
-    const probe = dgram.createSocket("udp4");
-    await new Promise(r => probe.bind(0, "127.0.0.1", r));
-    const deadPort = probe.address().port;
-    await new Promise(r => probe.close(r));
-
-    sock.send("x", deadPort, "127.0.0.1");
+    sock.send("x", ${deadPort}, "127.0.0.1");
     await Promise.race([gotError, Bun.sleep(2000)]);
 
     const wallMs = 1000;
