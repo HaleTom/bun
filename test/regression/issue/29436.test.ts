@@ -66,6 +66,58 @@ test.skipIf(!isLinux)("Bun.udpSocket: ICMP error does not busy-loop the event lo
   expect(exitCode).toBe(0);
 });
 
+// Connected UDP: the kernel's udp_err() sets sk->sk_err AND enqueues to the
+// error queue. Draining the error queue via MSG_ERRQUEUE clears sk_err (in
+// sock_dequeue_err_skb) for the last ICMP entry; a follow-up SO_ERROR read
+// consumes any residual sk_err so EPOLLERR deasserts.
+test.skipIf(!isLinux)("Bun.udpSocket (connected): ICMP error does not busy-loop the event loop", async () => {
+  const script = /* js */ `
+    let errorCount = 0;
+    let errorCode;
+    const { promise: gotError, resolve } = Promise.withResolvers();
+
+    const probe = await Bun.udpSocket({});
+    const deadPort = probe.port;
+    probe.close();
+
+    const socket = await Bun.udpSocket({
+      connect: { hostname: "127.0.0.1", port: deadPort },
+      socket: {
+        error(err) {
+          errorCount++;
+          errorCode ??= err?.code;
+          resolve();
+        },
+      },
+    });
+    socket.send("x");
+    await Promise.race([gotError, Bun.sleep(2000)]);
+
+    const wallMs = 1000;
+    const before = process.cpuUsage();
+    await Bun.sleep(wallMs);
+    const after = process.cpuUsage(before);
+    const cpuMs = (after.user + after.system) / 1000;
+
+    socket.close();
+    console.log(JSON.stringify({ errorCount, errorCode, cpuMs, wallMs }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  const result = JSON.parse(stdout.trim());
+  expect(result.errorCount).toBe(1);
+  expect(result.errorCode).toBe("ECONNREFUSED");
+  expect(result.cpuMs).toBeLessThan(result.wallMs * 0.75);
+  expect(exitCode).toBe(0);
+});
+
 test.skipIf(!isLinux)("node:dgram: ICMP error does not busy-loop the event loop", async () => {
   const script = /* js */ `
     const dgram = require("node:dgram");

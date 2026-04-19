@@ -641,7 +641,25 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     us_udp_socket_close(u);
                     break;
                 }
-                /* Error queue handled; EPOLLERR is not fatal here. */
+                /* EPOLLERR is also asserted when sk->sk_err is set without
+                 * an error-queue entry (non-ICMP async errors, or ICMP on
+                 * a connected socket where sk_err is set alongside the
+                 * queue entry). MSG_ERRQUEUE does not consume sk_err, so
+                 * EPOLLERR would stay asserted and busy-loop. SO_ERROR
+                 * reads-and-clears sk_err. In the common ICMP case the
+                 * kernel already zeroed sk_err when we dequeued the last
+                 * error-queue entry, so this returns 0 and is a no-op. */
+                int so_err = 0;
+                socklen_t so_err_len = sizeof(so_err);
+                if (getsockopt(us_poll_fd(p), SOL_SOCKET, SO_ERROR, (char *) &so_err, &so_err_len) == 0 && so_err != 0) {
+                    if (u->on_recv_error) {
+                        u->on_recv_error(u, so_err);
+                    }
+                    if (u->closed) {
+                        break;
+                    }
+                }
+                /* Error queue + sk_err handled; EPOLLERR is not fatal here. */
                 error = 0;
             }
 #endif
