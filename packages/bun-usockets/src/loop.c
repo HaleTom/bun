@@ -608,72 +608,34 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             }
 
 #if defined(__linux__)
-            /* On Linux with IP_RECVERR, EPOLLERR fires when an ICMP error
-             * (port unreachable, host unreachable, TTL exceeded, ...) is
-             * queued on the socket's error queue. The error queue must be
-             * read with MSG_ERRQUEUE — plain recvmsg reports the pending
-             * error once but does NOT dequeue it, so EPOLLERR stays
-             * asserted and epoll_wait busy-loops. Drain the queue and
-             * surface each errno via on_recv_error; the socket stays open
-             * so the user can keep sending/receiving after a transient
-             * ICMP error. Cap iterations to avoid starving the loop if
-             * errors arrive as fast as we drain them. */
+            /* IP_RECVERR: EPOLLERR means the error queue and/or sk_err is
+             * set. Drain the queue with MSG_ERRQUEUE (plain recv doesn't
+             * dequeue, so EPOLLERR would stay asserted and busy-loop),
+             * then consume any residual sk_err via SO_ERROR. Surface each
+             * errno via on_recv_error and keep the socket open. */
             if (error) {
-                int err = 0;
-                int drained = 0;
-                int budget = 32;
-                while (budget-- > 0 && (drained = bsd_udp_drain_errqueue(us_poll_fd(p), &err)) > 0) {
-                    if (err != 0 && u->on_recv_error) {
-                        u->on_recv_error(u, err);
-                    }
-                    if (u->closed) {
-                        break;
+                int err = 0, drained = 0;
+                for (int budget = 32; budget > 0 && !u->closed; budget--) {
+                    if ((drained = bsd_udp_drain_errqueue(us_poll_fd(p), &err)) <= 0) break;
+                    if (err && u->on_recv_error) u->on_recv_error(u, err);
+                }
+                if (!u->closed && drained < 0) {
+                    /* recvmsg(MSG_ERRQUEUE) itself failed — surface and
+                     * close to avoid spinning on a stuck EPOLLERR. */
+                    if (errno && u->on_recv_error) u->on_recv_error(u, errno);
+                    if (!u->closed) us_udp_socket_close(u);
+                } else if (!u->closed && drained == 0) {
+                    /* Queue empty — read-and-clear sk_err. Skip when budget
+                     * ran out (drained>0): sk_err then holds the NEXT
+                     * queue entry's errno and reading it now would
+                     * double-report on the next tick. */
+                    socklen_t len = sizeof(err);
+                    if (getsockopt(us_poll_fd(p), SOL_SOCKET, SO_ERROR, (char *) &err, &len) == 0 && err) {
+                        if (u->on_recv_error) u->on_recv_error(u, err);
                     }
                 }
-                if (u->closed) {
-                    break;
-                }
-                /* drained < 0: recvmsg(MSG_ERRQUEUE) failed with something
-                 * other than EAGAIN — the socket is in a bad state and
-                 * the error queue cannot be cleared. Surface the failure
-                 * errno, then close to avoid a busy loop on the stuck
-                 * EPOLLERR. */
-                if (drained < 0) {
-                    int drain_errno = errno;
-                    if (drain_errno != 0 && u->on_recv_error) {
-                        u->on_recv_error(u, drain_errno);
-                    }
-                    if (!u->closed) {
-                        us_udp_socket_close(u);
-                    }
-                    break;
-                }
-                /* EPOLLERR is also asserted when sk->sk_err is set without
-                 * an error-queue entry (non-ICMP async errors). MSG_ERRQUEUE
-                 * does not consume sk_err, so EPOLLERR would stay asserted
-                 * and busy-loop. SO_ERROR reads-and-clears sk_err.
-                 *
-                 * Only do this when the queue drained to empty (drained==0):
-                 * if we stopped due to budget exhaustion (drained>0, more
-                 * entries remain), the kernel's sock_dequeue_err_skb has
-                 * already written the NEXT entry's errno into sk_err, and
-                 * reading SO_ERROR now would double-report it when the
-                 * next epoll tick drains that entry. The remaining entries
-                 * keep EPOLLERR asserted so we'll process them then. */
-                if (drained == 0) {
-                    int so_err = 0;
-                    socklen_t so_err_len = sizeof(so_err);
-                    if (getsockopt(us_poll_fd(p), SOL_SOCKET, SO_ERROR, (char *) &so_err, &so_err_len) == 0 && so_err != 0) {
-                        if (u->on_recv_error) {
-                            u->on_recv_error(u, so_err);
-                        }
-                        if (u->closed) {
-                            break;
-                        }
-                    }
-                }
-                /* Error queue + sk_err handled; EPOLLERR is not fatal here. */
-                error = 0;
+                if (u->closed) break;
+                error = 0; /* handled; don't close below */
             }
 #endif
 
