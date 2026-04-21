@@ -539,6 +539,11 @@ fn flushLogs(this: *WebWorker) void {
         error.JSTerminated => @panic("unhandled exception"),
     };
     defer str.deref();
+    // Reset the log so a later flushLogs() call in spin()'s tail doesn't
+    // re-dispatch the same messages as a duplicate error event. `reset`
+    // also clears the errors/warnings counters, leaving the Log fully
+    // consistent between calls.
+    vm.log.reset();
     bun.jsc.fromJSHostCallGeneric(vm.global, @src(), WebWorker__dispatchError, .{ vm.global, this.cpp_worker, str, err }) catch |e| {
         _ = vm.global.reportUncaughtException(vm.global.takeException(e).asException(vm.global.vm()).?);
     };
@@ -582,11 +587,43 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         bun.outOfMemory();
     };
     jsc.markBinding(@src());
-    WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.written()), error_instance);
-    if (vm.worker) |worker_| {
-        _ = worker.setRequestedTerminate();
-        worker_.exitAndDeinit();
-    }
+    // Wrap in fromJSHostCallGeneric: for Node-kind workers,
+    // WebWorker__dispatchError -> dispatchErrorWithValue -> SerializedScriptValue::create
+    // opens a throw scope. Previously this was called immediately before the
+    // noreturn exitAndDeinit() so any pending exception died with the thread.
+    // Now that we return normally, any unchecked exception state must be
+    // caught here or JSC's exception-scope validator asserts the next time a
+    // timer or safepoint hits DECLARE_TOP_EXCEPTION_SCOPE.
+    //
+    // DON'T route the exception back through reportUncaughtException: this
+    // handler can be invoked from inside VirtualMachine.uncaughtException()
+    // (e.g. via Bun__reportUnhandledError for a sync throw in a timer),
+    // where is_handling_uncaught_exception is already true. Re-reporting
+    // would hit the re-entry guard that calls process.exit(7) — and in a
+    // worker that returns normally — then @panics. We're terminating the
+    // worker anyway and the original error was already dispatched to the
+    // parent via globalEventScope, so discard the pending exception.
+    bun.jsc.fromJSHostCallGeneric(globalObject, @src(), WebWorker__dispatchError, .{ globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.written()), error_instance }) catch {
+        _ = globalObject.tryTakeException();
+    };
+    // Don't call exitAndDeinit() directly here — we're still inside the JS
+    // execution context (entryScope is active from handleRejectedPromises).
+    // Tearing down the VM now triggers a JSC assertion failure
+    // (!vm().entryScope in Heap::lastChanceToFinalize). Set the Zig-level
+    // terminate flag and wake the loop so spin()'s while-loop breaks on its
+    // next hasRequestedTerminate() check and calls exitAndDeinit() after the
+    // JS call stack has unwound.
+    //
+    // Deliberately NOT calling the shared notifyNeedTermination() helper:
+    // that also requests JSC-level termination (TerminationException at the
+    // next safepoint), which mid-unwind of this rejection handler leaves
+    // entryScope active when exitAndDeinit() runs, reproducing the very
+    // assertion we're avoiding. The parent-thread terminate() path still
+    // goes through notifyNeedTermination(); this path only needs the
+    // cooperative Zig flag.
+    if (!worker.exit_called) vm.exit_handler.exit_code = 1;
+    _ = worker.setRequestedTerminate();
+    vm.eventLoop().wakeup();
 }
 
 fn setStatus(this: *WebWorker, status: Status) void {
