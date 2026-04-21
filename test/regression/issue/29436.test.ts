@@ -19,12 +19,35 @@ const deadPort = 1;
 // several seconds of startup, so budget well above the 5s default.
 const timeout = 20_000;
 
+async function run(script: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  const result = JSON.parse(stdout.trim());
+  // The error handler should fire exactly once per ICMP error, not zero
+  // (event swallowed) and not unbounded (re-fired every loop tick).
+  expect(result.errorCount).toBe(1);
+  expect(result.errorCode).toBe("ECONNREFUSED");
+  // The socket must remain open and usable after a transient ICMP error —
+  // a "fix" that closes it on error would also stop the busy-loop.
+  expect(result.closed).toBe(false);
+  // The buggy build burns ~100% CPU (cpuMs ≈ wallMs). A fixed build idles;
+  // even under debug/ASAN it stays well below 75% of wall time.
+  expect(result.cpuMs).toBeLessThan(result.wallMs * 0.75);
+  expect(exitCode).toBe(0);
+}
+
 // IP_RECVERR is Linux-only; on other platforms the send either silently
 // succeeds (no ICMP surfaced on unconnected sockets) or errors synchronously.
 test.skipIf(!isLinux)(
   "Bun.udpSocket: ICMP error does not busy-loop the event loop",
-  async () => {
-    const script = /* js */ `
+  () =>
+    run(/* js */ `
     let errorCount = 0;
     let errorCode;
     const { promise: gotError, resolve } = Promise.withResolvers();
@@ -48,32 +71,10 @@ test.skipIf(!isLinux)(
     const after = process.cpuUsage(before);
     const cpuMs = (after.user + after.system) / 1000;
 
-    // The socket must remain open and usable after a transient ICMP error —
-    // a "fix" that closes it on error would also stop the busy-loop.
     const closed = socket.closed;
     socket.close();
     console.log(JSON.stringify({ errorCount, errorCode, closed, cpuMs, wallMs }));
-  `;
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-
-    const result = JSON.parse(stdout.trim());
-    // The error handler should fire exactly once per ICMP error, not zero
-    // (event swallowed) and not unbounded (re-fired every loop tick).
-    expect(result.errorCount).toBe(1);
-    expect(result.errorCode).toBe("ECONNREFUSED");
-    expect(result.closed).toBe(false);
-    // The buggy build burns ~100% CPU (cpuMs ≈ wallMs). A fixed build idles;
-    // even under debug/ASAN it stays well below 75% of wall time.
-    expect(result.cpuMs).toBeLessThan(result.wallMs * 0.75);
-    expect(exitCode).toBe(0);
-  },
+  `),
   timeout,
 );
 
@@ -83,8 +84,8 @@ test.skipIf(!isLinux)(
 // consumes any residual sk_err so EPOLLERR deasserts.
 test.skipIf(!isLinux)(
   "Bun.udpSocket (connected): ICMP error does not busy-loop the event loop",
-  async () => {
-    const script = /* js */ `
+  () =>
+    run(/* js */ `
     let errorCount = 0;
     let errorCode;
     const { promise: gotError, resolve } = Promise.withResolvers();
@@ -111,30 +112,14 @@ test.skipIf(!isLinux)(
     const closed = socket.closed;
     socket.close();
     console.log(JSON.stringify({ errorCount, errorCode, closed, cpuMs, wallMs }));
-  `;
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-
-    const result = JSON.parse(stdout.trim());
-    expect(result.errorCount).toBe(1);
-    expect(result.errorCode).toBe("ECONNREFUSED");
-    expect(result.closed).toBe(false);
-    expect(result.cpuMs).toBeLessThan(result.wallMs * 0.75);
-    expect(exitCode).toBe(0);
-  },
+  `),
   timeout,
 );
 
 test.skipIf(!isLinux)(
   "node:dgram: ICMP error does not busy-loop the event loop",
-  async () => {
-    const script = /* js */ `
+  () =>
+    run(/* js */ `
     const dgram = require("node:dgram");
     let errorCount = 0;
     let errorCode;
@@ -160,22 +145,6 @@ test.skipIf(!isLinux)(
     try { sock.address(); closed = false; } catch { closed = true; }
     sock.close();
     console.log(JSON.stringify({ errorCount, errorCode, closed, cpuMs, wallMs }));
-  `;
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-
-    const result = JSON.parse(stdout.trim());
-    expect(result.errorCount).toBe(1);
-    expect(result.errorCode).toBe("ECONNREFUSED");
-    expect(result.closed).toBe(false);
-    expect(result.cpuMs).toBeLessThan(result.wallMs * 0.75);
-    expect(exitCode).toBe(0);
-  },
+  `),
   timeout,
 );
