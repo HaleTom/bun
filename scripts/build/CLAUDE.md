@@ -157,7 +157,7 @@ For `mode: "full"` (the normal case):
 2. **Codegen** — `emitCodegen(n, cfg, sources)` emits ~20 generation steps (bindgen, `.classes.ts` → C++, bundled modules, LUTs). Returns grouped outputs.
 3. **Zig** — `emitZig(n, cfg, {...})` emits zig download + `zig build obj` → `bun-zig.o`.
 4. **Flags** — `computeFlags(cfg)` evaluates flag tables → cflags/cxxflags/defines/ldflags/stripflags.
-5. **PCH** — compile `root.h` → PCH (skipped on Windows, skipped in CI full mode).
+5. **PCH** — compile `root-pch.h` → PCH (skipped on Windows, skipped in CI full mode).
 6. **Compile** — loop sources, `cxx()`/`cc()` per file.
 7. **Link** — `emitShims(n, cfg)` for platform workaround dylibs, then `link(n, cfg, exeName, objects, {libs, flags})`.
 8. **Post-link** — strip (release only), dsymutil (darwin release only).
@@ -183,6 +183,7 @@ Split CI modes: `zig-only` (zstd+codegen+zig), `cpp-only` (deps+codegen+compile 
 | `ninja.ts`                     | `Ninja` class — the build-file writer                                              |
 | `rules.ts`                     | `registerAllRules()` — calls each module's `registerXxxRules()`                    |
 | `compile.ts`                   | `cc`/`cxx`/`pch`/`link`/`ar` + `registerCompileRules()`                            |
+| `unified.ts`                   | WebKit-style unified-source bundling, `generateUnifiedSources()`                   |
 | `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission                 |
 | `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                           |
 | `zig.ts`                       | Zig download + `zig build`, `emitZig()`                                            |
@@ -224,7 +225,7 @@ Why not auto-register in emit functions? Some rules are shared (`dep_configure` 
 
 **Dep order in `allDeps` matters.** `fetchDeps: ["X"]` means X must come first (its `.ref` stamp node must exist). Link order matters too: static linking resolves left→right, providers after users.
 
-**PCH, cc, and no-PCH cxx need implicit dep on `depOutputs`**, not order-only. Local WebKit's sub-build rewrites forwarding headers as an undeclared side effect (only `lib*.a` are declared outputs). Depfiles record those headers, but ninja stats them before the sub-build runs — order-only lags one build. The lib itself is the invalidation signal. Codegen headers stay order-only: they're declared outputs with restat, so depfile tracking is exact.
+**PCH, cc, and no-PCH cxx need implicit dep on `depHeaderSignal`**, not order-only. Local WebKit's sub-build rewrites forwarding headers as an undeclared side effect (only `lib*.a` are declared outputs). Depfiles record those headers, but ninja stats them before the sub-build runs — order-only lags one build. The lib itself is the invalidation signal. Codegen headers stay order-only: they're declared outputs with restat, so depfile tracking is exact.
 
 **Windows `ReleaseFast` → `ReleaseSafe`** in `zig.ts`. Load-bearing since Bun 1.1; caught more crashes. Don't "fix" it.
 

@@ -551,11 +551,17 @@ pub const FetchTasklet = struct {
                 this.promise.deinit();
                 return;
             }
-            // everything ok
-            if (this.metadata == null) {
-                log("onProgressUpdate: metadata is null", .{});
-                return;
-            }
+            // checkServerIdentity passed. Fall through to resolve/reject below.
+            //
+            // We can reach this point with `metadata == null` when the
+            // connection failed after the TLS handshake but before response
+            // headers arrived (e.g. an mTLS server closing the socket because
+            // the client didn't present a certificate) — the certificate_info
+            // from the first progress update is coalesced into the later
+            // failure result. The `metadata == null && isSuccess()` case is
+            // already handled by the early return above, so the fall-through
+            // here always has either metadata to resolve with or a failure to
+            // reject with.
         }
 
         const tracker = this.tracker;
@@ -1382,7 +1388,11 @@ pub const FetchTasklet = struct {
 
         const prev_metadata = task.result.metadata;
         const prev_cert_info = task.result.certificate_info;
+        const prev_can_stream = task.result.can_stream;
         task.result = result;
+        // can_stream is a one-shot signal to start the request body stream; don't let a
+        // later coalesced result clobber it before the JS thread sees it.
+        task.result.can_stream = task.result.can_stream or prev_can_stream;
 
         // Preserve pending certificate info if it was preovided in the previous update.
         if (task.result.certificate_info == null) {
