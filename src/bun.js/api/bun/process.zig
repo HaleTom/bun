@@ -1030,6 +1030,8 @@ pub const PosixSpawnOptions = struct {
     new_process_group: bool = false,
     /// PTY slave fd for controlling terminal setup (-1 if not using PTY).
     pty_slave_fd: i32 = -1,
+    /// Windows-only ConPTY handle; void placeholder on POSIX.
+    pseudoconsole: void = {},
     /// Linux only. When non-null, the child sets PR_SET_PDEATHSIG to this
     /// signal between vfork and exec in posix_spawn_bun, so the kernel kills
     /// it when the spawning thread dies. When null, defaults to whatever this
@@ -1108,8 +1110,11 @@ pub const WindowsSpawnOptions = struct {
     linux_pdeathsig: ?u8 = null,
     /// POSIX-only; placeholder for struct compatibility.
     new_process_group: bool = false,
-    /// PTY not supported on Windows - this is a void placeholder for struct compatibility
+    /// POSIX-only PTY slave fd; void placeholder on Windows.
     pty_slave_fd: void = {},
+    /// Windows ConPTY handle. When set, the child is attached to the
+    /// pseudoconsole and stdin/stdout/stderr are provided by ConPTY.
+    pseudoconsole: ?bun.windows.HPCON = null,
     pub const WindowsOptions = struct {
         verbatim_arguments: bool = false,
         hide_window: bool = true,
@@ -1388,7 +1393,7 @@ pub fn spawnProcessPosix(
             },
             .buffer => {
                 if (Environment.isLinux) use_memfd: {
-                    if (!options.stream and i > 0) {
+                    if (!options.stream and i > 0 and bun.sys.canUseMemfd()) {
                         // use memfd if we can
                         const label = switch (i) {
                             0 => "spawn_stdio_stdin",
@@ -1475,13 +1480,16 @@ pub fn spawnProcessPosix(
             .dup2 => @panic("TODO dup2 extra fd"),
             .inherit => {
                 try actions.inherit(fileno);
+                try extra_fds.append(bun.invalid_fd);
             },
             .ignore => {
                 try actions.openZ(fileno, "/dev/null", bun.O.RDWR, 0o664);
+                try extra_fds.append(bun.invalid_fd);
             },
 
             .path => |path| {
                 try actions.open(fileno, path, bun.O.RDWR | bun.O.CREAT, 0o664);
+                try extra_fds.append(bun.invalid_fd);
             },
             .ipc, .buffer => {
                 const fds: [2]bun.FD = try bun.sys.socketpair(
@@ -1504,8 +1512,10 @@ pub fn spawnProcessPosix(
             },
             .pipe => |fd| {
                 try actions.dup2(fd, fileno);
-
-                try extra_fds.append(fd);
+                // The fd was supplied by the caller (a number in the stdio array) and is
+                // not owned by us. Record an invalid sentinel so finalizeStreams skips it
+                // instead of closing the caller's descriptor out from under them.
+                try extra_fds.append(bun.invalid_fd);
             },
         }
     }
@@ -1609,6 +1619,10 @@ pub fn spawnProcessWindows(
     }
 
     errdefer failed = true;
+
+    if (options.pseudoconsole) |hpcon| {
+        uv_process_options.pseudoconsole = hpcon;
+    }
 
     if (options.windows.hide_window) {
         uv_process_options.flags |= uv.UV_PROCESS_WINDOWS_HIDE;

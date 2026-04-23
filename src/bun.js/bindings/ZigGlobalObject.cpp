@@ -829,7 +829,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::Gl
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(static_cast<JSVMClientData*>(vm.clientData)->normalWorld())
     , m_worldIsNormal(true)
-    , m_builtinInternalFunctions(vm)
+    , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this))
     , globalEventScope(adoptRef(*new Bun::WorkerGlobalScope(m_scriptExecutionContext)))
 {
@@ -844,7 +844,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(static_cast<JSVMClientData*>(vm.clientData)->normalWorld())
     , m_worldIsNormal(true)
-    , m_builtinInternalFunctions(vm)
+    , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this, contextId))
     , globalEventScope(adoptRef(*new Bun::WorkerGlobalScope(m_scriptExecutionContext)))
 {
@@ -2697,7 +2697,7 @@ JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    m_builtinInternalFunctions.initialize(*this);
+    m_builtinInternalFunctions->initialize(*this);
 
     auto clientData = WebCore::clientData(vm);
     auto& builtinNames = WebCore::builtinNames(vm);
@@ -2986,10 +2986,14 @@ extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* g
     auto& vm = JSC::getVM(globalObject);
     // Clear the request for the termination exception to be thrown
     vm.clearHasTerminationRequest();
-    // In case it actually has been thrown, clear the exception itself as well
+    // In case it actually has been thrown, clear the exception itself as well.
+    // tryClearException() refuses to clear termination exceptions, so use
+    // TopExceptionScope::clearException() which clears unconditionally —
+    // this function's whole purpose is to clear that specific exception so
+    // execution can resume (e.g. for process.on('exit') after terminate()).
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (scope.exception() && vm.isTerminationException(scope.exception())) {
-        (void)scope.tryClearException();
+        scope.clearException();
     }
 }
 
