@@ -15,6 +15,7 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/js/node/child_process/child_process.test.ts [ SKIP ] # Unexpected identifier "WARNING"
 [ ASAN ] test/js/bun/shell/bunshell.test.ts [ SKIP ] # bunshell > quiet > basic
 [ ASAN ] test/bundler/cli.test.ts [ SKIP ] # debug logs
+[ ASAN ] test/integration/build-prefetch/prefetch.test.ts [ SKIP ] # scripts/build/fetch-cli.ts has top-level await + circular zig.ts import; JSC assertion !dependency.isAsync fires under asan-debug. Runs fine on release.
 
 # Tests failed due to ASAN: attempting free on address which was not malloc()-ed
 [ ASAN ] test/js/node/worker_threads/worker_threads.test.ts [ CRASH ] # After: threadId module and worker property is consistent
