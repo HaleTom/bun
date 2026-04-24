@@ -302,6 +302,7 @@ function parseArgs(argv: string[]): CliArgs {
     "timeTrace",
     "ci",
     "buildkite",
+    "pr",
   ]);
   // PartialConfig fields that are STRINGS.
   const stringFields = new Set([
