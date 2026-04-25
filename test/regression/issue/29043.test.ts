@@ -7,10 +7,11 @@ import { bunEnv, bunExe } from "harness";
 // `error` event listener cancels the event, the error must not propagate to
 // the parent Worker and the worker must not be terminated with exit code 1.
 
-async function runWorker(workerCode: string) {
+async function runWorker(workerCode: string, parentFlags: string[] = []) {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
+      ...parentFlags,
       "-e",
       `
         import { Worker } from 'node:worker_threads';
@@ -51,6 +52,13 @@ function expectCleanWorkerExit({ stdout }: { stdout: string; exitCode: number | 
 
 test("Worker error event preventDefault() stops propagation and keeps worker running (async throw)", async () => {
   // Microtask throw — exercises the runtime `onUnhandledRejection` path.
+  //
+  // This test deliberately does NOT call `process.exit(0)` — the nested
+  // `setImmediate` provides a natural drain point, and natural drainage is
+  // required to observe the `uncaughtException` path's `prev_exit_code`
+  // restore (VirtualMachine.zig). An explicit `process.exit(0)` would
+  // overwrite `exit_handler.exit_code` before the exit event fires, making
+  // the `exit:0` assertion tautological for this code path.
   const result = await runWorker(`
     globalThis.addEventListener('error', (e) => {
       console.log('handled:' + (e.error && e.error.message));
@@ -64,7 +72,6 @@ test("Worker error event preventDefault() stops propagation and keeps worker run
     setImmediate(() => {
       setImmediate(() => {
         console.log('alive');
-        process.exit(0);
       });
     });
   `);
@@ -172,6 +179,65 @@ test("Worker error event preventDefault() keeps worker alive and exits cleanly e
   expect(result.stdout).toContain("alive");
   // Same clean-exit gate as tests 1-3. The listener's secondary throw is
   // absorbed by `onUnhandledRejection`'s re-entry-safe handling and must
-  // NOT leak to stderr or escalate to a parent error.
+  // NOT escalate to a parent error (verified via the `PARENT_ERROR` gate
+  // in `expectCleanWorkerExit`).
+  expectCleanWorkerExit(result);
+});
+
+test("Worker error_event_prevented does not leak across uncaughtException calls under inherited --unhandled-rejections=strict", async () => {
+  // The worker inherits the parent's `--unhandled-rejections=strict` mode via
+  // `transform_options` copy (see `web_worker.zig start()`). Sequence:
+  //
+  //   (1) `queueMicrotask` throw → `Bun__reportUnhandledError` → direct call to
+  //       `VirtualMachine.uncaughtException()`. Listener calls preventDefault
+  //       → `error_event_prevented = true` is set for this dispatch.
+  //
+  //   (2) The worker then installs `process.on('uncaughtException')` and
+  //       `process.on('unhandledRejection')` handlers, then triggers a second
+  //       error via `Promise.reject`. This goes through `unhandledRejection`
+  //       → `.strict` case → `uncaughtException(is_rejection=true)` where
+  //       `Bun__handleUncaughtException` now returns > 0 (the uncaught handler
+  //       fires), so the `if (!handled)` block is skipped — meaning
+  //       `onUnhandledRejection`'s own entry-reset never runs.
+  //
+  //   (3) Control returns to `.strict`. Its guard at
+  //       `takeWorkerErrorEventPrevented()` then reads the flag. Without the
+  //       entry-reset in `uncaughtException`, it would read the *stale* `true`
+  //       from step (1) and wrongly skip `Bun__handleUnhandledRejection`,
+  //       silently swallowing the `process.on('unhandledRejection')` dispatch
+  //       for error (2) even though error (2) was never presented to the
+  //       globalThis listener.
+  //
+  //   This test asserts both handlers fire: `uncaught:true` (uncaughtException
+  //   handler ran) AND `unhandled:true` (unhandledRejection handler ran).
+  const result = await runWorker(
+    `
+    globalThis.addEventListener('error', (e) => {
+      console.log('dispatched:' + (e.error && e.error.message));
+      e.preventDefault();
+    });
+    queueMicrotask(() => { throw new Error('first'); });
+    setImmediate(() => {
+      setImmediate(() => {
+        let uncaughtSeen = false;
+        let unhandledSeen = false;
+        process.on('uncaughtException', () => { uncaughtSeen = true; });
+        process.on('unhandledRejection', () => { unhandledSeen = true; });
+        Promise.reject(new Error('second'));
+        setImmediate(() => {
+          setImmediate(() => {
+            console.log('uncaught:' + uncaughtSeen);
+            console.log('unhandled:' + unhandledSeen);
+          });
+        });
+      });
+    });
+  `,
+    ["--unhandled-rejections=strict"],
+  );
+
+  expect(result.stdout).toContain("dispatched:first");
+  expect(result.stdout).toContain("uncaught:true");
+  expect(result.stdout).toContain("unhandled:true");
   expectCleanWorkerExit(result);
 });

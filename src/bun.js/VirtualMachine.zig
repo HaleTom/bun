@@ -711,6 +711,14 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
     }
     this.is_handling_uncaught_exception = true;
     defer this.is_handling_uncaught_exception = false;
+    // Clear any stale `error_event_prevented` from a prior uncaughtException
+    // whose consumer never read-and-cleared it. This matters when a later
+    // `.strict`-mode rejection has `Bun__handleUncaughtException` return > 0
+    // so the `if (!handled)` block below is skipped — in that case
+    // `onUnhandledRejection`'s own entry-reset (in web_worker.zig) never runs,
+    // and `.strict`'s guard at `takeWorkerErrorEventPrevented()` would otherwise
+    // read the stale `true` and wrongly skip `Bun__handleUnhandledRejection`.
+    if (this.worker) |w| w.error_event_prevented = false;
     var handled = Bun__handleUncaughtException(globalObject, err.toError() orelse err, if (is_rejection) 1 else 0) > 0;
     if (!handled) {
         // TODO maybe we want a separate code path for uncaught exceptions
