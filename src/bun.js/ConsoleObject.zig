@@ -2759,6 +2759,10 @@ pub const Formatter = struct {
                 writer.writeAll(comptime Output.prettyFmt("<cyan>" ++ fmt ++ "<r>", enable_ansi_colors));
             },
             .Map => {
+                if (value.jsType() == .WeakMap) {
+                    return writer.writeAll("WeakMap {}");
+                }
+
                 const length_value = try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
                 const length = try length_value.coerce(i32, this.globalThis);
 
@@ -2766,10 +2770,9 @@ pub const Formatter = struct {
                 this.quote_strings = true;
                 defer this.quote_strings = prev_quote_strings;
 
-                const is_weak = value.jsType() == .WeakMap;
-                const map_name = if (is_weak) "WeakMap" else "Map";
+                const map_name = "Map";
 
-                if (length == 0 or is_weak) {
+                if (length == 0) {
                     return writer.print("{s} {{}}", .{map_name});
                 }
 
@@ -2867,6 +2870,10 @@ pub const Formatter = struct {
                 writer.writeAll("}");
             },
             .Set => {
+                if (value.jsType() == .WeakSet) {
+                    return writer.writeAll("WeakSet {}");
+                }
+
                 const length_value = try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
                 const length = try length_value.coerce(i32, this.globalThis);
 
@@ -2874,10 +2881,9 @@ pub const Formatter = struct {
                 this.quote_strings = true;
                 defer this.quote_strings = prev_quote_strings;
 
-                const is_weak = value.jsType() == .WeakSet;
-                const set_name = if (is_weak) "WeakSet" else "Set";
+                const set_name = "Set";
 
-                if (length == 0 or is_weak) {
+                if (length == 0) {
                     return writer.print("{s} {{}}", .{set_name});
                 }
 
