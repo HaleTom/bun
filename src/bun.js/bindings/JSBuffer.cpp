@@ -1370,7 +1370,9 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
     WTF::String stringValue;
     JSC::JSArrayBufferView* viewValue = nullptr;
     uint8_t byteValue = 0;
-    enum { StringBranch, ViewBranch, ByteBranch } branch;
+    enum { StringBranch,
+        ViewBranch,
+        ByteBranch } branch;
 
     if (value.isString()) {
         branch = StringBranch;
