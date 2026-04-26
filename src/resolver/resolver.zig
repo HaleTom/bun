@@ -2309,7 +2309,7 @@ pub const Resolver = struct {
 
         // We must initialize it as empty so that the result index is correct.
         // This is important so that browser_scope has a valid index.
-        const dir_info_ptr = r.dir_cache.put(&dir_cache_info_result, .{}) catch unreachable;
+        const dir_info_ptr = r.dir_cache.reserve(&dir_cache_info_result, .{}) catch unreachable;
 
         try r.dirInfoUncached(
             dir_info_ptr,
@@ -2324,6 +2324,7 @@ pub const Resolver = struct {
             open_dir,
             package_id,
         );
+        r.dir_cache.publish(dir_cache_info_result);
         return dir_info_ptr;
     }
 
@@ -3017,7 +3018,10 @@ pub const Resolver = struct {
 
             // We must initialize it as empty so that the result index is correct.
             // This is important so that browser_scope has a valid index.
-            const dir_info_ptr = try r.dir_cache.put(&queue_top.result, DirInfo{});
+            // `reserve` assigns the index and storage but keeps the entry hidden
+            // from `peek()` until we `publish` after population, so the
+            // dirInfoCached fast path never observes a half-initialized entry.
+            const dir_info_ptr = try r.dir_cache.reserve(&queue_top.result, DirInfo{});
 
             try r.dirInfoUncached(
                 dir_info_ptr,
@@ -3030,6 +3034,7 @@ pub const Resolver = struct {
                 open_dir,
                 null,
             );
+            r.dir_cache.publish(queue_top.result);
 
             if (queue_slice.len == 0) {
                 return dir_info_ptr;
