@@ -6,6 +6,10 @@ import { bunEnv, bunExe } from "harness";
 // Worker error event must honor preventDefault(): when the worker's own
 // `error` event listener cancels the event, the error must not propagate to
 // the parent Worker and the worker must not be terminated with exit code 1.
+// Per the HTML spec's "runtime script errors" algorithm for WorkerGlobalScope,
+// the ErrorEvent dispatched on the worker's global scope must be cancelable,
+// and `preventDefault()` (or an `onerror` attribute returning `true`) must
+// suppress the default propagation.
 
 async function runWorker(workerCode: string, parentFlags: string[] = []) {
   await using proc = Bun.spawn({
