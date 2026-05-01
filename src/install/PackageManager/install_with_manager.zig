@@ -237,12 +237,21 @@ pub fn installWithManager(
 
                     const all_name_hashes: []PackageNameHash = brk: {
                         if (!manager.summary.overrides_changed) break :brk &.{};
-                        const hashes_len = manager.lockfile.overrides.map.entries.len + lockfile.overrides.map.entries.len;
-                        if (hashes_len == 0) break :brk &.{};
-                        var all_name_hashes = try bun.default_allocator.alloc(PackageNameHash, hashes_len);
-                        @memcpy(all_name_hashes[0..manager.lockfile.overrides.map.entries.len], manager.lockfile.overrides.map.keys());
-                        @memcpy(all_name_hashes[manager.lockfile.overrides.map.entries.len..], lockfile.overrides.map.keys());
-                        var i = manager.lockfile.overrides.map.entries.len;
+                        const global_count = manager.lockfile.overrides.global.entries.len;
+                        const scoped_count = lockfile.overrides.scoped.entries.len;
+                        const total_override_child_count = global_count + scoped_count;
+                        if (total_override_child_count == 0) break :brk &.{};
+                        var all_name_hashes = try bun.default_allocator.alloc(PackageNameHash, total_override_child_count);
+                        var idx: usize = 0;
+                        for (manager.lockfile.overrides.global.keys()) |k| {
+                            all_name_hashes[idx] = k;
+                            idx += 1;
+                        }
+                        for (lockfile.overrides.scoped.keys()) |k| {
+                            all_name_hashes[idx] = k.child_name_hash;
+                            idx += 1;
+                        }
+                        var i: usize = 0;
                         while (i < all_name_hashes.len) {
                             if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes[0..i], all_name_hashes[i]) != null) {
                                 all_name_hashes[i] = all_name_hashes[all_name_hashes.len - 1];
@@ -376,6 +385,7 @@ pub fn installWithManager(
                                     &dependency,
                                     invalid_package_id,
                                     false,
+                                    null,
                                 ) catch |err| {
                                     addDependencyError(manager, &dependency, err);
                                 };
@@ -396,6 +406,7 @@ pub fn installWithManager(
                                 &dep,
                                 invalid_package_id,
                                 false,
+                                null,
                             ) catch |err| {
                                 addDependencyError(manager, &dep, err);
                             };
@@ -419,6 +430,7 @@ pub fn installWithManager(
                                     &dependency,
                                     manager.lockfile.buffers.resolutions.items[dependency_i],
                                     false,
+                                    null,
                                 ) catch |err| {
                                     addDependencyError(manager, &dependency, err);
                                 };
@@ -491,7 +503,7 @@ pub fn installWithManager(
             var iter = manager.lockfile.patched_dependencies.iterator();
             while (iter.next()) |entry| manager.enqueuePatchTaskPre(PatchTask.newCalcPatchHash(manager, entry.key_ptr.*, null));
         }
-        manager.enqueueDependencyList(root.dependencies);
+        manager.enqueueDependencyList(root.dependencies, null);
     } else {
         {
             var iter = manager.lockfile.patched_dependencies.iterator();

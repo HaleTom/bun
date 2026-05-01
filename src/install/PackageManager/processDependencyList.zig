@@ -143,7 +143,7 @@ pub fn processExtractedTarballPackage(
             package_id.* = package.meta.id;
 
             if (package.dependencies.len > 0) {
-                bun.handleOom(manager.lockfile.scratch.dependency_list_queue.writeItem(package.dependencies));
+                bun.handleOom(manager.lockfile.scratch.dependency_list_queue.writeItem(.{ .package_id = package.meta.id, .dependencies = package.dependencies }));
             }
 
             return package;
@@ -201,7 +201,7 @@ pub fn processExtractedTarballPackage(
             package_id.* = package.meta.id;
 
             if (package.dependencies.len > 0) {
-                bun.handleOom(manager.lockfile.scratch.dependency_list_queue.writeItem(package.dependencies));
+                bun.handleOom(manager.lockfile.scratch.dependency_list_queue.writeItem(.{ .package_id = package.meta.id, .dependencies = package.dependencies }));
             }
 
             return package;
@@ -256,6 +256,7 @@ pub fn processDependencyListItem(
                 &dependency,
                 resolution,
                 install_peer,
+                null,
             );
         },
         .root_dependency => |dependency_id| {
@@ -267,6 +268,7 @@ pub fn processDependencyListItem(
                 &dependency,
                 resolution,
                 install_peer,
+                null,
                 assignRootResolution,
                 failRootResolution,
             );
@@ -293,6 +295,7 @@ pub fn processPeerDependencyList(
             &dependency,
             resolution,
             true,
+            null,
         );
     }
 }

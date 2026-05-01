@@ -300,7 +300,7 @@ pub const Stringifier = struct {
                 );
             }
 
-            if (lockfile.overrides.map.count() > 0) {
+            if (lockfile.overrides.global.count() > 0 or lockfile.overrides.scoped.count() > 0) {
                 lockfile.overrides.sort(lockfile);
 
                 try writeIndent(writer, indent);
@@ -309,12 +309,27 @@ pub const Stringifier = struct {
                     \\
                 );
                 indent.* += 1;
-                for (lockfile.overrides.map.values()) |override_dep| {
+                for (lockfile.overrides.global.values()) |override_dep| {
                     try writeIndent(writer, indent);
                     try writer.print(
                         \\{f}: {f},
                         \\
                     , .{ override_dep.name.fmtJson(buf, .{}), override_dep.version.literal.fmtJson(buf, .{}) });
+                }
+                for (lockfile.overrides.scoped.keys(), lockfile.overrides.scoped.values()) |key, override_dep| {
+                    try writeIndent(writer, indent);
+                    const parent_name = parent_name: {
+                        for (lockfile.packages.items(.name_hash), lockfile.packages.items(.name)) |nh, n| {
+                            if (nh == key.parent_name_hash) {
+                                break :parent_name lockfile.str(&n);
+                            }
+                        }
+                        break :parent_name "";
+                    };
+                    try writer.print(
+                        \\{s}/{f}: {f},
+                        \\
+                    , .{ parent_name, override_dep.name.fmtJson(buf, .{}), override_dep.version.literal.fmtJson(buf, .{}) });
                 }
 
                 try decIndent(writer, indent);
@@ -1283,7 +1298,32 @@ pub fn parseIntoBinaryLockfile(
                 },
             };
 
-            try lockfile.overrides.map.put(allocator, name_hash, dep);
+            // Detect scoped override: parent/child format
+            const is_scoped = brk: {
+                if (name_str[0] == '@') {
+                    const first_slash = strings.indexOfChar(name_str, '/') orelse break :brk false;
+                    break :brk strings.indexOfChar(name_str[first_slash + 1 ..], '/') != null;
+                } else {
+                    break :brk strings.indexOfChar(name_str, '/') != null;
+                }
+            };
+
+            if (is_scoped) {
+                const last_slash = strings.lastIndexOfChar(name_str, '/').?;
+                const parent_str = name_str[0..last_slash];
+                const child_str = name_str[last_slash + 1 ..];
+                const parent_hash = String.Builder.stringHash(parent_str);
+                const child_hash = String.Builder.stringHash(child_str);
+                const child_name = try string_buf.appendWithHash(child_str, child_hash);
+                const child_dep: Dependency = .{
+                    .name = child_name,
+                    .name_hash = child_hash,
+                    .version = dep.version,
+                };
+                try lockfile.overrides.scoped.put(allocator, .{ .parent_name_hash = parent_hash, .child_name_hash = child_hash }, child_dep);
+            } else {
+                try lockfile.overrides.global.put(allocator, name_hash, dep);
+            }
         }
     }
 

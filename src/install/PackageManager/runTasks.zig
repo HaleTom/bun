@@ -1097,9 +1097,9 @@ fn doFlushDependencyQueue(this: *PackageManager) void {
     var lockfile = this.lockfile;
     var dependency_queue = &lockfile.scratch.dependency_list_queue;
 
-    while (dependency_queue.readItem()) |dependencies_list| {
-        var i: u32 = dependencies_list.off;
-        const end = dependencies_list.off + dependencies_list.len;
+    while (dependency_queue.readItem()) |item| {
+        var i: u32 = item.dependencies.off;
+        const end = item.dependencies.off + item.dependencies.len;
         while (i < end) : (i += 1) {
             const dependency = lockfile.buffers.dependencies.items[i];
             this.enqueueDependencyWithMain(
@@ -1107,6 +1107,7 @@ fn doFlushDependencyQueue(this: *PackageManager) void {
                 &dependency,
                 lockfile.buffers.resolutions.items[i],
                 false,
+                item.package_id,
             ) catch {};
         }
     }
