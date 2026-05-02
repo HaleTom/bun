@@ -23,7 +23,7 @@ export const highway: Dependency = {
     commit: HIGHWAY_COMMIT,
   }),
 
-  patches: ["patches/highway/silence-warnings.patch"],
+  patches: ["patches/highway/silence-warnings.patch", "patches/highway/disable-evex512-on-non-avx512-hosts.patch"],
 
   build: cfg => {
     const spec: DirectBuild = {
@@ -46,7 +46,13 @@ export const highway: Dependency = {
       // -fno-exceptions / -fmath-errno aren't CLOptions (clang-cl warns
       // "unknown argument ignored"). globalFlags supplies /EHs-c- and /GR-
       // on Windows; upstream's MSVC branch additionally sets the STL macro.
-      cflags: cfg.windows ? ["-D_HAS_EXCEPTIONS=0"] : ["-fno-exceptions", "-fmath-errno"],
+      // -U__EVEX512__ prevents Highway from activating its evex512 target
+      // variant when clang defines that macro while compiling with -march=haswell
+      // (AVX2 max). Without it, Highway's foreach_target.h emits AVX512
+      // intrinsics that fail to inline in the haswell TU context.
+      cflags: cfg.windows
+        ? ["-D_HAS_EXCEPTIONS=0"]
+        : ["-fno-exceptions", "-fmath-errno", "-Wno-ignored-attributes", "-U__EVEX512__"],
     };
 
     // clang-cl on arm64-windows doesn't define __ARM_NEON even though NEON
