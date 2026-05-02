@@ -77,12 +77,12 @@
 
 ## 11. Integration Tests
 
-- [ ] 11.1 Add test: global override behavior remains unchanged
-- [ ] 11.2 Add test: npm nested override applies only under matching parent
-- [ ] 11.3 Add test: npm nested override does not apply under different parent
-- [ ] 11.4 Add test: npm nested override with `"."` and child override handles both
-- [ ] 11.5 Add test: Yarn-style `parent/child` resolution applies only under matching parent
-- [ ] 11.6 Add test: Yarn-style resolution with scoped parent package (`@scope/parent/child`)
-- [ ] 11.7 Add test: deeper-than-one nesting produces warning
-- [ ] 11.8 Verify tests fail with current build (before implementation)
-- [ ] 11.9 Verify tests pass after all implementation tasks complete
+- [x] 11.1 Add test: global override behavior remains unchanged
+- [x] 11.2 Add test: npm nested override applies only under matching parent
+- [x] 11.3 Add test: npm nested override does not apply under different parent
+- [x] 11.4 Add test: npm nested override with `"."` and child override handles both
+- [x] 11.5 Add test: Yarn-style `parent/child` resolution applies only under matching parent
+- [x] 11.6 Add test: Yarn-style resolution with scoped parent package (`@scope/parent/child`)
+- [x] 11.7 Add test: deeper-than-one nesting produces warning (existing warning message reused)
+- [ ] 11.8 Verify tests fail with current build (before implementation) — blocked: clang version mismatch prevents build
+- [ ] 11.9 Verify tests pass after all implementation tasks complete — blocked: clang version mismatch prevents build
