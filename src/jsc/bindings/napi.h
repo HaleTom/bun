@@ -198,6 +198,12 @@ public:
             drain();
         }
 
+        // Cleanup hooks can leave a VM exception pending (e.g. via
+        // napi_call_function on a throwing JS function). Clear before
+        // entering the finalizer loop so the first finalizer starts
+        // from a clean state, matching the invariant documented below.
+        clearExceptionsBetweenFinalizers();
+
         // Defer GC during entire finalizer cleanup to prevent iterator invalidation.
         // This prevents any GC-triggered finalizer execution while m_finalizers is being iterated.
         JSC::DeferGCForAWhile deferGC(m_vm);
