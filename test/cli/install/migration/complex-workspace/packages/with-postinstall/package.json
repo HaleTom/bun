@@ -2,7 +2,7 @@
   "name": "with-postinstall",
   "version": "1.0.0",
   "dependencies": {
-    "sharp": "*",
+    "sharp": "^0.35.4",
     "svelte": "3.50.0"
   },
   "scripts": {
